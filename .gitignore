@@ -1,0 +1,8 @@
+.env
+__pycache__/
+node_modules/
+dist/
+control-panel/node_modules/
+control-panel/dist/
+control-panel/.vite/
+.DS_Store

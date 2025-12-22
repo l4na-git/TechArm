@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "points": [
+    { "id": "p00", "u": null, "v": null, "x": null, "y": null, "z": null },
+    { "id": "p10", "u": null, "v": null, "x": null, "y": null, "z": null },
+    { "id": "p20", "u": null, "v": null, "x": null, "y": null, "z": null },
+
+    { "id": "p01", "u": null, "v": null, "x": null, "y": null, "z": null },
+    { "id": "p11", "u": null, "v": null, "x": null, "y": null, "z": null },
+    { "id": "p21", "u": null, "v": null, "x": null, "y": null, "z": null },
+
+    { "id": "p02", "u": null, "v": null, "x": null, "y": null, "z": null },
+    { "id": "p12", "u": null, "v": null, "x": null, "y": null, "z": null },
+    { "id": "p22", "u": null, "v": null, "x": null, "y": null, "z": null }
+  ]
+}

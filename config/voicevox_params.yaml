@@ -1,0 +1,8 @@
+# VOICEVOX audio_query override parameters
+# 編集によって春日部つむぎの話速や抑揚を微調整できます。
+speed_scale: 1.05
+pitch_scale: 0.0
+intonation_scale: 1.10
+volume_scale: 1.0
+pre_phoneme_length: 0.10
+post_phoneme_length: 0.10

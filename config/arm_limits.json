@@ -1,0 +1,19 @@
+{
+  "workspace_xyz": {
+    "x_min": null,
+    "x_max": null,
+    "y_min": null,
+    "y_max": null,
+    "z_min": null,
+    "z_max": null
+  },
+  "motion": {
+    "max_speed": 0.30,
+    "max_accel": 0.30
+  },
+  "safe_pose": {
+    "x": null,
+    "y": null,
+    "z": null
+  }
+}
