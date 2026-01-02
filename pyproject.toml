@@ -1,0 +1,15 @@
+[project]
+name = "teacharm"
+version = "0.1.0"
+description = "TeachArm prototype runtime"
+requires-python = "==3.11.*"
+dependencies = [
+  "fastapi==0.110.0",
+  "uvicorn==0.27.1",
+  "httpx==0.26.0",
+  "pydantic==1.10.14",
+  "PyYAML==6.0.1",
+]
+
+[tool.uv]
+python-preference = "only-system"
