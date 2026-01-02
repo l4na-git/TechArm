@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import httpx
 
@@ -29,10 +29,14 @@ class DialogueService:
         self._settings = settings
         self._scripts = scripts
 
-    async def on_region_event(self, region: Region, event: str) -> DialogueResponse:
+    async def on_region_event(
+        self, region: Region, event: str
+    ) -> DialogueResponse:
         command_names = getattr(region, event, [])
         if not command_names:
-            return await self._call_llm([{"role": "user", "content": f"{region.id}"}])
+            return await self._call_llm(
+                [{"role": "user", "content": f"{region.id}"}]
+            )
         return await self._run_commands(command_names, source="script")
 
     async def on_text(self, user_text: str) -> DialogueResponse:
@@ -41,17 +45,17 @@ class DialogueService:
         for rule in self._scripts.negative_rules:
             if "関係" in rule.when and "?" not in lowered:
                 return await self._run_commands(rule.action, source="negative")
+        role_content = f"{self._scripts.role.name}:{self._scripts.role.tone}"
         return await self._call_llm(
             [
-                {
-                    "role": "system",
-                    "content": f"{self._scripts.role.name}:{self._scripts.role.tone}",
-                },
+                {"role": "system", "content": role_content},
                 {"role": "user", "content": user_text},
             ]
         )
 
-    async def _run_commands(self, names: List[str], source: str) -> DialogueResponse:
+    async def _run_commands(
+        self, names: List[str], source: str
+    ) -> DialogueResponse:
         steps: List[Dict] = []
         speech: List[str] = []
         for name in names:

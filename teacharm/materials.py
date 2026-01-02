@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence
 
 from pydantic import BaseModel, validator
 
@@ -21,11 +20,15 @@ class BoundingBox(BaseModel):
     @validator("*")
     def _ensure_range(cls, value: float) -> float:
         if not 0 <= value <= 1:
-            raise ValueError("Bounding box coordinates must be normalized (0-1)")
+            raise ValueError(
+                "Bounding box coordinates must be normalized (0-1)"
+            )
         return value
 
     def contains(self, u: float, v: float) -> bool:
-        return self.x <= u <= self.x + self.w and self.y <= v <= self.y + self.h
+        in_x = self.x <= u <= self.x + self.w
+        in_y = self.y <= v <= self.y + self.h
+        return in_x and in_y
 
 
 class Region(BaseModel):
@@ -45,7 +48,10 @@ class Material(BaseModel):
     regions: List[Region]
 
     def find_hit_regions(self, u: float, v: float) -> List[Region]:
-        return [region for region in self.regions if region.bbox.contains(u, v)]
+        return [
+            region for region in self.regions
+            if region.bbox.contains(u, v)
+        ]
 
 
 PRIORITY = {"question": 0, "line": 1, "word": 2}
@@ -55,9 +61,11 @@ def select_best_region(regions: Sequence[Region]) -> Optional[Region]:
     """Select the highest priority region among hits."""
     if not regions:
         return None
-    return sorted(
-        regions, key=lambda reg: (PRIORITY.get(reg.type, 99), reg.bbox.w * reg.bbox.h)
-    )[0]
+
+    def sort_key(reg: Region) -> tuple:
+        return (PRIORITY.get(reg.type, 99), reg.bbox.w * reg.bbox.h)
+
+    return sorted(regions, key=sort_key)[0]
 
 
 def load_materials(material_dir: Path) -> Dict[str, Material]:

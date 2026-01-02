@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Dict
 
 from ..logger import get_logger
 
@@ -36,7 +36,10 @@ class ArmService:
 
     async def move_to(self, command: ArmCommand) -> None:
         await self.ensure_calibrated()
-        logger.info("Moving arm to (%.3f, %.3f, %.3f) speed=%.2f", command.x, command.y, command.z, command.speed)
+        logger.info(
+            "Moving arm to (%.3f, %.3f, %.3f) speed=%.2f",
+            command.x, command.y, command.z, command.speed
+        )
 
     async def go_safe_pose(self) -> None:
         await self.ensure_calibrated()

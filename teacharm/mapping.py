@@ -47,4 +47,8 @@ class MaterialRepository:
             return MappingResult(None, None, (u, v))
         hits = material.find_hit_regions(u, v)
         region = select_best_region(hits)
-        return MappingResult(region=region, material_id=material.material_id, normalized_point=(u, v))
+        return MappingResult(
+            region=region,
+            material_id=material.material_id,
+            normalized_point=(u, v)
+        )

@@ -14,10 +14,10 @@ import yaml
 from .config import Settings, load_settings
 from .logger import get_logger
 from .mapping import MaterialRepository
-from .materials import Material, Region, load_materials
+from .materials import Region, load_materials
 from .scripts import load_scripts
 from .services.arm import ArmCommand, ArmService
-from .services.dialogue import DialogueResponse, DialogueService
+from .services.dialogue import DialogueService
 from .services.tts import VoiceVoxService
 from .state import AppState
 
@@ -69,8 +69,11 @@ class TeachArmContext:
         self.state = AppState(active_material=self.repository.current_id)
         self.dialogue = DialogueService(settings, self.scripts)
         self.tts = VoiceVoxService(settings)
-        self.arm = ArmService(self._load_json(settings.config_dir / "arm_limits.json"))
-        self.calibration = self._load_json(settings.config_dir / "arm_calibration.json")
+        arm_limits = self._load_json(settings.config_dir / "arm_limits.json")
+        self.arm = ArmService(arm_limits)
+        self.calibration = self._load_json(
+            settings.config_dir / "arm_calibration.json"
+        )
 
     def reload_scripts(self) -> None:
         self.scripts = load_scripts(self.scripts_path)
@@ -78,7 +81,9 @@ class TeachArmContext:
 
     def _load_json(self, path: Path) -> dict:
         if not path.exists():
-            logger.warning("Config file %s is missing; using empty defaults", path)
+            logger.warning(
+                "Config file %s is missing; using empty defaults", path
+            )
             return {}
         with path.open("r", encoding="utf-8") as handle:
             return json.load(handle)
@@ -110,11 +115,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return {
             "materials": [
                 {
-                    "material_id": material.material_id,
-                    "regions": len(material.regions),
-                    "selected": material.material_id == ctx.repository.current_id,
+                    "material_id": mat.material_id,
+                    "regions": len(mat.regions),
+                    "selected": mat.material_id == ctx.repository.current_id,
                 }
-                for material in ctx.repository.list_materials().values()
+                for mat in ctx.repository.list_materials().values()
             ]
         }
 
@@ -128,12 +133,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         ctx.state.last_region = None
         return {"selected": material.material_id}
 
-    async def _build_dialogue_response(region: Optional[Region], event: str) -> dict:
+    async def _build_dialogue_response(
+        region: Optional[Region], event: str
+    ) -> dict:
         if not region:
             return {"region": None, "dialogue": None}
         ctx.state.last_region = region.id
         dialogue = await ctx.dialogue.on_region_event(region, event)
-        audio = await ctx.tts.synthesize(dialogue.text) if dialogue.text else None
+        audio = None
+        if dialogue.text:
+            audio = await ctx.tts.synthesize(dialogue.text)
         if audio is None and dialogue.text:
             logger.info("Audio synthesis skipped for text '%s'", dialogue.text)
         return {
@@ -149,7 +158,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.post("/api/events/pointer")
     async def pointer_event(payload: PointerEvent) -> dict:
         mapping = ctx.repository.map_point(payload.u, payload.v)
-        response = await _build_dialogue_response(mapping.region, payload.event)
+        response = await _build_dialogue_response(
+            mapping.region, payload.event
+        )
         response["point"] = {
             "u": payload.u,
             "v": payload.v,
@@ -159,13 +170,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.post("/api/dialogue")
     async def dialogue(payload: DialoguePayload) -> dict:
-        dialogue = await ctx.dialogue.on_text(payload.text)
-        audio = await ctx.tts.synthesize(dialogue.text) if dialogue.text else None
+        dialogue_resp = await ctx.dialogue.on_text(payload.text)
+        audio = None
+        if dialogue_resp.text:
+            audio = await ctx.tts.synthesize(dialogue_resp.text)
         return {
             "dialogue": {
-                "text": dialogue.text,
-                "source": dialogue.source,
-                "commands": dialogue.commands,
+                "text": dialogue_resp.text,
+                "source": dialogue_resp.source,
+                "commands": dialogue_resp.commands,
             },
             "audio_path": str(audio) if audio else None,
         }
@@ -194,8 +207,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def get_common_script() -> dict:
         try:
             content = ctx.scripts_path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="common.yaml not found")
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="common.yaml not found"
+            ) from exc
         return {"path": str(ctx.scripts_path), "content": content}
 
     @app.post("/api/scripts/common")
@@ -203,9 +218,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         try:
             data = yaml.safe_load(payload.content) or {}
         except yaml.YAMLError as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid YAML: {exc}") from exc
+            raise HTTPException(
+                status_code=400, detail=f"Invalid YAML: {exc}"
+            ) from exc
         if "commands" not in data:
-            raise HTTPException(status_code=400, detail="commands section is required")
+            raise HTTPException(
+                status_code=400, detail="commands section is required"
+            )
         ctx.scripts_path.write_text(payload.content, encoding="utf-8")
         ctx.reload_scripts()
         return {"status": "updated"}

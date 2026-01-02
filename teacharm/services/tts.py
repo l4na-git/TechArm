@@ -46,7 +46,10 @@ class VoiceVoxService:
                 if style.get("name") == self._settings.voicevox_style_name:
                     self._speaker_id = style.get("id")
                     return self._speaker_id
-        logger.warning("VOICEVOX speaker %s not found", self._settings.voicevox_speaker_name)
+        logger.warning(
+            "VOICEVOX speaker %s not found",
+            self._settings.voicevox_speaker_name
+        )
         return None
 
     async def synthesize(self, text: str) -> Optional[Path]:
@@ -85,7 +88,10 @@ class VoiceVoxService:
 
     def _build_cache_key(self, text: str, speaker_id: int) -> str:
         digest = hashlib.sha256()
-        payload = json.dumps({"text": text, "speaker": speaker_id, **self._params}, ensure_ascii=False)
+        payload = json.dumps(
+            {"text": text, "speaker": speaker_id, **self._params},
+            ensure_ascii=False
+        )
         digest.update(payload.encode("utf-8"))
         return digest.hexdigest()
 
