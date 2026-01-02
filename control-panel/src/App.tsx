@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState, useCallback } from "react";
 import { dump as dumpYAML, load as loadYAML } from "js-yaml";
 
 type MaterialSummary = {
@@ -49,8 +49,17 @@ type CommandEntry = {
 
 type CommandStep = Record<string, string | boolean>;
 
-const API_BASE =
-  import.meta.env.VITE_TEACHARM_API_URL ?? "http://localhost:8000";
+const resolveApiBase = () => {
+  if (import.meta.env.VITE_TEACHARM_API_URL) {
+    return import.meta.env.VITE_TEACHARM_API_URL as string;
+  }
+  if (typeof window !== "undefined") {
+    return `http://${window.location.hostname}:8000`;
+  }
+  return "http://localhost:8000";
+};
+
+const API_BASE = resolveApiBase();
 
 const fetchJSON = async <T,>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -65,15 +74,39 @@ const fetchJSON = async <T,>(path: string, init?: RequestInit): Promise<T> => {
 
 function Section({
   title,
+  icon,
   children,
+  defaultOpen = true,
+  className = "",
 }: {
   title: string;
+  icon?: string;
   children: React.ReactNode;
+  defaultOpen?: boolean;
+  className?: string;
 }) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+
   return (
-    <section className="section">
-      <h2>{title}</h2>
-      {children}
+    <section className={`section ${className}`}>
+      <div
+        className="section-header"
+        onClick={() => setIsOpen(!isOpen)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === "Enter" && setIsOpen(!isOpen)}
+      >
+        <h2>
+          {icon && <span>{icon}</span>}
+          {title}
+        </h2>
+        <span className={`section-toggle ${!isOpen ? "collapsed" : ""}`}>
+          ▼
+        </span>
+      </div>
+      <div className={`section-content ${!isOpen ? "collapsed" : ""}`}>
+        {children}
+      </div>
     </section>
   );
 }
@@ -99,10 +132,15 @@ export default function App() {
   const [scriptLoading, setScriptLoading] = useState(false);
   const [scriptData, setScriptData] = useState<ScriptData | null>(null);
   const [rawYaml, setRawYaml] = useState("");
+  const [commandFilter, setCommandFilter] = useState("");
+  const [actionDrafts, setActionDrafts] = useState<Record<number, string>>({});
 
-  const appendLog = (message: string) => {
-    setLog((prev) => [`${new Date().toLocaleTimeString()} ${message}`, ...prev]);
-  };
+  const appendLog = useCallback((message: string) => {
+    setLog((prev) => [
+      `${new Date().toLocaleTimeString()} ${message}`,
+      ...prev.slice(0, 99),
+    ]);
+  }, []);
 
   const loadHealth = async () => {
     try {
@@ -231,6 +269,10 @@ export default function App() {
 
   const saveScript = async () => {
     if (!scriptData) return;
+    if (scriptValidation.issues.length > 0) {
+      appendLog("Script save blocked: fix validation errors.");
+      return;
+    }
     setScriptLoading(true);
     try {
       const yamlText = dumpYAML(denormalizeScript(scriptData), {
@@ -255,473 +297,834 @@ export default function App() {
     return health.status === "ok" ? "online" : "error";
   }, [health]);
 
+  const scriptValidation = useMemo(() => {
+    if (!scriptData) {
+      return {
+        issues: [] as string[],
+        duplicateNames: new Set<string>(),
+        emptyNameIndexes: new Set<number>(),
+        commandNameSet: new Set<string>(),
+        unknownActionsByRule: new Map<number, string[]>(),
+      };
+    }
+    const issues: string[] = [];
+    const emptyNameIndexes = new Set<number>();
+    const nameCounts = new Map<string, number>();
+    scriptData.commands.forEach((command, idx) => {
+      const trimmed = command.name.trim();
+      if (!trimmed) {
+        emptyNameIndexes.add(idx);
+        return;
+      }
+      nameCounts.set(trimmed, (nameCounts.get(trimmed) ?? 0) + 1);
+    });
+    const duplicateNames = new Set<string>();
+    nameCounts.forEach((count, name) => {
+      if (count > 1) duplicateNames.add(name);
+    });
+    emptyNameIndexes.forEach((idx) => {
+      issues.push(`Command #${idx + 1} has an empty name.`);
+    });
+    duplicateNames.forEach((name) => {
+      issues.push(`Command name "${name}" is duplicated.`);
+    });
+
+    const commandNameSet = new Set<string>(nameCounts.keys());
+    const unknownActionsByRule = new Map<number, string[]>();
+    scriptData.negative_rules.forEach((rule, idx) => {
+      const unknown = rule.action.filter((name) => !commandNameSet.has(name));
+      if (unknown.length > 0) {
+        unknownActionsByRule.set(idx, unknown);
+        const label = rule.id || `#${idx + 1}`;
+        issues.push(
+          `Negative rule "${label}" references unknown command(s): ${unknown.join(", ")}.`,
+        );
+      }
+    });
+
+    return {
+      issues,
+      duplicateNames,
+      emptyNameIndexes,
+      commandNameSet,
+      unknownActionsByRule,
+    };
+  }, [scriptData]);
+
+  const commandNames = useMemo(() => {
+    const names = Array.from(scriptValidation.commandNameSet);
+    return names.sort((a, b) => a.localeCompare(b));
+  }, [scriptValidation.commandNameSet]);
+
+  const filteredCommands = useMemo(() => {
+    if (!commandFilter.trim()) return commandNames;
+    const lowered = commandFilter.trim().toLowerCase();
+    return commandNames.filter((name) => name.toLowerCase().includes(lowered));
+  }, [commandNames, commandFilter]);
+
+  const commandSections = useMemo(() => {
+    if (!scriptData) return [];
+    const query = commandFilter.trim().toLowerCase();
+    const source = query
+      ? scriptData.commands.filter((command) =>
+          command.name.toLowerCase().includes(query),
+        )
+      : scriptData.commands;
+    const sections = new Map<string, CommandEntry[]>();
+    source.forEach((command) => {
+      const trimmed = command.name.trim();
+      const prefix = trimmed.includes("_") ? trimmed.split("_")[0] : trimmed;
+      const title = prefix || "Misc";
+      if (!sections.has(title)) {
+        sections.set(title, []);
+      }
+      sections.get(title)?.push(command);
+    });
+    return Array.from(sections.entries()).map(([title, commands]) => ({
+      title,
+      commands,
+    }));
+  }, [scriptData, commandFilter]);
+
+  const knownStepKeys = useMemo(() => {
+    if (!scriptData) return [];
+    const keys = new Set<string>();
+    scriptData.commands.forEach((command) => {
+      command.steps.forEach((step) => {
+        Object.keys(step).forEach((key) => keys.add(key));
+      });
+    });
+    return Array.from(keys).sort((a, b) => a.localeCompare(b));
+  }, [scriptData]);
+
+  const addRuleAction = (ruleIndex: number, action: string) => {
+    if (!scriptData) return;
+    if (!action) return;
+    const updated = [...scriptData.negative_rules];
+    const rule = updated[ruleIndex];
+    if (!rule) return;
+    if (rule.action.includes(action)) return;
+    updated[ruleIndex] = { ...rule, action: [...rule.action, action] };
+    setScriptData({ ...scriptData, negative_rules: updated });
+  };
+
+  const removeRuleAction = (ruleIndex: number, action: string) => {
+    if (!scriptData) return;
+    const updated = [...scriptData.negative_rules];
+    const rule = updated[ruleIndex];
+    if (!rule) return;
+    updated[ruleIndex] = {
+      ...rule,
+      action: rule.action.filter((item) => item !== action),
+    };
+    setScriptData({ ...scriptData, negative_rules: updated });
+  };
+
+  const addStepField = (
+    commandIndex: number,
+    stepIndex: number,
+    key: string,
+    value: string | boolean,
+  ) => {
+    if (!scriptData) return;
+    const updatedCommands = [...scriptData.commands];
+    const command = updatedCommands[commandIndex];
+    if (!command) return;
+    const updatedSteps = [...command.steps];
+    const step = updatedSteps[stepIndex];
+    if (!step || key in step) return;
+    updatedSteps[stepIndex] = { ...step, [key]: value };
+    updatedCommands[commandIndex] = { ...command, steps: updatedSteps };
+    setScriptData({ ...scriptData, commands: updatedCommands });
+  };
+
   return (
-    <main>
-      <header>
-        <h1>TeachArm Control Panel</h1>
-        <p>API Base: {API_BASE}</p>
-        <p>Status: {healthStatus}</p>
+    <div className="app-container">
+      <header className="app-header">
+        <div className="app-header-content">
+          <h1>TeachArm Control Panel</h1>
+          <div className="header-info">
+            <div className="api-url">
+              API: <code>{API_BASE}</code>
+            </div>
+            <span className={`status-badge ${healthStatus}`}>
+              {healthStatus === "online" ? "接続中" : healthStatus === "error" ? "エラー" : "確認中"}
+            </span>
+          </div>
+        </div>
       </header>
 
-      <Section title="Materials">
-        <div className="materials">
-          {materials.map((material) => (
-            <button
-              type="button"
-              key={material.material_id}
-              className={material.selected ? "selected" : ""}
-              onClick={() => selectMaterial(material.material_id)}
-              disabled={loading}
-            >
-              {material.material_id} ({material.regions})
-            </button>
-          ))}
-        </div>
-      </Section>
-
-      <Section title="Pointer Event (manual)">
-        <form
-          onSubmit={(evt) => {
-            evt.preventDefault();
-            sendPointer(pointer);
-          }}
-          className="form-grid"
-        >
-          <label>
-            u
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              max="1"
-              value={pointer.u}
-              onChange={(e) =>
-                setPointer((prev) => ({
-                  ...prev,
-                  u: Number(e.target.value),
-                }))
-              }
-            />
-          </label>
-          <label>
-            v
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              max="1"
-              value={pointer.v}
-              onChange={(e) =>
-                setPointer((prev) => ({
-                  ...prev,
-                  v: Number(e.target.value),
-                }))
-              }
-            />
-          </label>
-          <label>
-            event
-            <select
-              value={pointer.event}
-              onChange={(e) =>
-                setPointer((prev) => ({
-                  ...prev,
-                  event: e.target.value as PointerEventPayload["event"],
-                }))
-              }
-            >
-              <option value="on_point">on_point</option>
-              <option value="on_help">on_help</option>
-            </select>
-          </label>
-          <button type="submit" disabled={loading}>
-            Send
-          </button>
-        </form>
-      </Section>
-
-      <Section title="Dialogue Command">
-        <div className="form-grid">
-          <input
-            type="text"
-            placeholder="例: もう一回"
-            value={dialogueText}
-            onChange={(e) => setDialogueText(e.target.value)}
-          />
-          <button type="button" disabled={loading} onClick={sendDialogue}>
-            Send Dialogue
-          </button>
-        </div>
-      </Section>
-
-      <Section title="Arm Control">
-        <form
-          className="form-grid"
-          onSubmit={(evt: FormEvent) => {
-            evt.preventDefault();
-            moveArm(arm);
-          }}
-        >
-          <label>
-            x
-            <input
-              type="number"
-              value={arm.x}
-              onChange={(e) =>
-                setArm((prev) => ({ ...prev, x: Number(e.target.value) }))
-              }
-            />
-          </label>
-          <label>
-            y
-            <input
-              type="number"
-              value={arm.y}
-              onChange={(e) =>
-                setArm((prev) => ({ ...prev, y: Number(e.target.value) }))
-              }
-            />
-          </label>
-          <label>
-            z
-            <input
-              type="number"
-              value={arm.z}
-              onChange={(e) =>
-                setArm((prev) => ({ ...prev, z: Number(e.target.value) }))
-              }
-            />
-          </label>
-          <label>
-            speed
-            <input
-              type="number"
-              step="0.01"
-              value={arm.speed}
-              onChange={(e) =>
-                setArm((prev) => ({ ...prev, speed: Number(e.target.value) }))
-              }
-            />
-          </label>
-          <button type="submit" disabled={loading}>
-            Move Arm
-          </button>
-          <button type="button" disabled={loading} onClick={sendSafePose}>
-            Go Safe Pose
-          </button>
-        </form>
-      </Section>
-
-      <Section title="Logs">
-        <div className="logs">
-          {log.length === 0 && <p>No events yet.</p>}
-          <ul>
-            {log.map((entry, index) => (
-              <li key={index}>{entry}</li>
-            ))}
-          </ul>
-        </div>
-      </Section>
-
-      <Section title="Script Editor (common.yaml)">
-        {scriptLoading && <p>Loading script...</p>}
-        {!scriptLoading && scriptData && (
-          <div className="script-form">
-            <p className="script-path">{scriptPath}</p>
-            <h3>Role</h3>
-            <div className="form-grid">
-              <label>
-                名前
-                <input
-                  type="text"
-                  value={scriptData.role.name}
-                  onChange={(e) =>
-                    setScriptData({
-                      ...scriptData,
-                      role: { ...scriptData.role, name: e.target.value },
-                    })
-                  }
-                />
-              </label>
-              <label>
-                トーン
-                <input
-                  type="text"
-                  value={scriptData.role.tone}
-                  onChange={(e) =>
-                    setScriptData({
-                      ...scriptData,
-                      role: { ...scriptData.role, tone: e.target.value },
-                    })
-                  }
-                />
-              </label>
+      <main>
+        <div className="dashboard-grid">
+          <Section title="教材選択" icon="📚" className="grid-col-6">
+            <div className="materials">
+              {materials.length === 0 && (
+                <p className="helper-text">教材がありません</p>
+              )}
+              {materials.map((material) => (
+                <button
+                  type="button"
+                  key={material.material_id}
+                  className={material.selected ? "selected" : ""}
+                  onClick={() => selectMaterial(material.material_id)}
+                  disabled={loading}
+                >
+                  {material.material_id}
+                  <span style={{ opacity: 0.7, marginLeft: "0.5rem" }}>
+                    ({material.regions} 領域)
+                  </span>
+                </button>
+              ))}
             </div>
-            <label>
-              ルール（1 行につき 1 ルール）
-              <textarea
-                rows={4}
-                value={scriptData.role.rules.join("\n")}
-                onChange={(e) =>
-                  setScriptData({
-                    ...scriptData,
-                    role: {
-                      ...scriptData.role,
-                      rules: e.target.value
-                        .split("\n")
-                        .map((line) => line.trim())
-                        .filter(Boolean),
-                    },
-                  })
-                }
-              />
-            </label>
+          </Section>
 
-            <h3>Negative Rules</h3>
-            {scriptData.negative_rules.map((rule, idx) => (
-              <div className="negative-rule" key={idx}>
-                <div className="form-grid">
+          <Section title="ログ" icon="📋" className="grid-col-6">
+            <div className="logs">
+              {log.length === 0 && (
+                <p className="logs-empty">イベントはまだありません</p>
+              )}
+              <ul>
+                {log.map((entry, index) => (
+                  <li key={index}>{entry}</li>
+                ))}
+              </ul>
+            </div>
+          </Section>
+
+          <Section title="ポインタイベント" icon="👆" className="grid-col-6">
+            <form
+              onSubmit={(evt) => {
+                evt.preventDefault();
+                sendPointer(pointer);
+              }}
+              className="form-grid"
+            >
+              <label>
+                <span>U 座標</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="1"
+                  value={pointer.u}
+                  onChange={(e) =>
+                    setPointer((prev) => ({
+                      ...prev,
+                      u: Number(e.target.value),
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                <span>V 座標</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="1"
+                  value={pointer.v}
+                  onChange={(e) =>
+                    setPointer((prev) => ({
+                      ...prev,
+                      v: Number(e.target.value),
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                <span>イベント種別</span>
+                <select
+                  value={pointer.event}
+                  onChange={(e) =>
+                    setPointer((prev) => ({
+                      ...prev,
+                      event: e.target.value as PointerEventPayload["event"],
+                    }))
+                  }
+                >
+                  <option value="on_point">on_point</option>
+                  <option value="on_help">on_help</option>
+                </select>
+              </label>
+              <button type="submit" className="btn-primary" disabled={loading}>
+                送信
+              </button>
+            </form>
+          </Section>
+
+          <Section title="ダイアログ" icon="💬" className="grid-col-6">
+            <div className="form-row">
+              <label style={{ flex: 1 }}>
+                <span>テキスト入力</span>
+                <input
+                  type="text"
+                  placeholder="例: もう一回教えて"
+                  value={dialogueText}
+                  onChange={(e) => setDialogueText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      sendDialogue();
+                    }
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={loading || !dialogueText.trim()}
+                onClick={sendDialogue}
+                style={{ alignSelf: "flex-end" }}
+              >
+                送信
+              </button>
+            </div>
+          </Section>
+
+          <Section title="アーム制御" icon="🦾" className="grid-col-12">
+            <form
+              className="form-grid"
+              onSubmit={(evt: FormEvent) => {
+                evt.preventDefault();
+                moveArm(arm);
+              }}
+            >
+              <label>
+                <span>X 座標</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={arm.x}
+                  onChange={(e) =>
+                    setArm((prev) => ({ ...prev, x: Number(e.target.value) }))
+                  }
+                />
+              </label>
+              <label>
+                <span>Y 座標</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={arm.y}
+                  onChange={(e) =>
+                    setArm((prev) => ({ ...prev, y: Number(e.target.value) }))
+                  }
+                />
+              </label>
+              <label>
+                <span>Z 座標</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={arm.z}
+                  onChange={(e) =>
+                    setArm((prev) => ({ ...prev, z: Number(e.target.value) }))
+                  }
+                />
+              </label>
+              <label>
+                <span>速度</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  max="1"
+                  value={arm.speed}
+                  onChange={(e) =>
+                    setArm((prev) => ({
+                      ...prev,
+                      speed: Number(e.target.value),
+                    }))
+                  }
+                />
+              </label>
+              <button type="submit" className="btn-primary" disabled={loading}>
+                移動
+              </button>
+              <button
+                type="button"
+                className="btn-success"
+                disabled={loading}
+                onClick={sendSafePose}
+              >
+                安全位置へ
+              </button>
+            </form>
+          </Section>
+
+          <Section
+            title="スクリプトエディタ"
+            icon="📝"
+            className="grid-col-12"
+            defaultOpen={false}
+          >
+            {scriptLoading && <p className="helper-text">読み込み中...</p>}
+            {!scriptLoading && scriptData && (
+              <div className="script-form">
+                <p className="script-path">📁 {scriptPath}</p>
+
+                <h3>ロール設定</h3>
+                <div className="form-grid form-grid-2">
                   <label>
-                    ID
+                    <span>名前</span>
                     <input
                       type="text"
-                      value={rule.id}
-                      onChange={(e) => {
-                        const updated = [...scriptData.negative_rules];
-                        updated[idx] = { ...rule, id: e.target.value };
-                        setScriptData({ ...scriptData, negative_rules: updated });
-                      }}
+                      value={scriptData.role.name}
+                      onChange={(e) =>
+                        setScriptData({
+                          ...scriptData,
+                          role: { ...scriptData.role, name: e.target.value },
+                        })
+                      }
                     />
                   </label>
                   <label>
-                    条件 (when)
+                    <span>トーン</span>
                     <input
                       type="text"
-                      value={rule.when}
-                      onChange={(e) => {
-                        const updated = [...scriptData.negative_rules];
-                        updated[idx] = { ...rule, when: e.target.value };
-                        setScriptData({ ...scriptData, negative_rules: updated });
-                      }}
+                      value={scriptData.role.tone}
+                      onChange={(e) =>
+                        setScriptData({
+                          ...scriptData,
+                          role: { ...scriptData.role, tone: e.target.value },
+                        })
+                      }
                     />
                   </label>
                 </div>
                 <label>
-                  Action（カンマ区切り）
-                  <input
-                    type="text"
-                    value={rule.action.join(", ")}
-                    onChange={(e) => {
-                      const updated = [...scriptData.negative_rules];
-                      updated[idx] = {
-                        ...rule,
-                        action: e.target.value
-                          .split(",")
-                          .map((item) => item.trim())
-                          .filter(Boolean),
-                      };
-                      setScriptData({ ...scriptData, negative_rules: updated });
-                    }}
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const updated = scriptData.negative_rules.filter(
-                      (_, ridx) => ridx !== idx,
-                    );
-                    setScriptData({ ...scriptData, negative_rules: updated });
-                  }}
-                >
-                  Remove Rule
-                </button>
-              </div>
-            ))}
-            <button
-              type="button"
-              onClick={() =>
-                setScriptData({
-                  ...scriptData,
-                  negative_rules: [
-                    ...scriptData.negative_rules,
-                    { id: "NEW_RULE", when: "", action: [] },
-                  ],
-                })
-              }
-            >
-              Add Negative Rule
-            </button>
-
-            <h3>Commands</h3>
-            {scriptData.commands.map((command, cIdx) => (
-              <div className="command-card" key={`${command.name}-${cIdx}`}>
-                <div className="form-grid">
-                  <label>
-                    コマンド名
-                    <input
-                      type="text"
-                      value={command.name}
-                      onChange={(e) => {
-                        const updated = [...scriptData.commands];
-                        updated[cIdx] = { ...command, name: e.target.value };
-                        setScriptData({ ...scriptData, commands: updated });
-                      }}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() =>
+                  <span>ルール（1行に1ルール）</span>
+                  <textarea
+                    rows={4}
+                    value={scriptData.role.rules.join("\n")}
+                    onChange={(e) =>
                       setScriptData({
                         ...scriptData,
-                        commands: scriptData.commands.filter(
-                          (_, idx) => idx !== cIdx,
-                        ),
+                        role: {
+                          ...scriptData.role,
+                          rules: e.target.value
+                            .split("\n")
+                            .map((line) => line.trim())
+                            .filter(Boolean),
+                        },
                       })
                     }
-                  >
-                    Remove Command
-                  </button>
-                </div>
-                {command.steps.map((step, sIdx) => (
-                  <div className="command-step" key={`${command.name}-${sIdx}`}>
-                    <div className="command-step-header">
-                      <span>Step {sIdx + 1}</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const updatedCommands = [...scriptData.commands];
-                          const newSteps = command.steps.filter(
-                            (_, idx) => idx !== sIdx,
-                          );
-                          updatedCommands[cIdx] = {
-                            ...command,
-                            steps: newSteps,
-                          };
-                          setScriptData({ ...scriptData, commands: updatedCommands });
-                        }}
-                      >
-                        Remove Step
-                      </button>
+                  />
+                </label>
+
+                <h3>ネガティブルール</h3>
+                {scriptData.negative_rules.map((rule, idx) => (
+                  <div className="negative-rule" key={idx}>
+                    <div className="form-grid form-grid-2">
+                      <label>
+                        <span>ID</span>
+                        <input
+                          type="text"
+                          value={rule.id}
+                          onChange={(e) => {
+                            const updated = [...scriptData.negative_rules];
+                            updated[idx] = { ...rule, id: e.target.value };
+                            setScriptData({
+                              ...scriptData,
+                              negative_rules: updated,
+                            });
+                          }}
+                        />
+                      </label>
+                      <label>
+                        <span>条件 (when)</span>
+                        <input
+                          type="text"
+                          value={rule.when}
+                          onChange={(e) => {
+                            const updated = [...scriptData.negative_rules];
+                            updated[idx] = { ...rule, when: e.target.value };
+                            setScriptData({
+                              ...scriptData,
+                              negative_rules: updated,
+                            });
+                          }}
+                        />
+                      </label>
                     </div>
-                    {Object.entries(step).map(([key, value]) => (
-                      <div className="step-field" key={`${key}-${sIdx}`}>
-                        <label>
-                          {key}
-                          {typeof value === "boolean" ? (
-                            <input
-                              type="checkbox"
-                              checked={value}
-                              onChange={(e) => {
-                                const updatedCommands = [...scriptData.commands];
-                                const updatedSteps = [...command.steps];
-                                updatedSteps[sIdx] = {
-                                  ...step,
-                                  [key]: e.target.checked,
-                                };
-                                updatedCommands[cIdx] = {
-                                  ...command,
-                                  steps: updatedSteps,
-                                };
-                                setScriptData({
-                                  ...scriptData,
-                                  commands: updatedCommands,
-                                });
-                              }}
-                            />
-                          ) : (
-                            <input
-                              type="text"
-                              value={String(value)}
-                              onChange={(e) => {
-                                const updatedCommands = [...scriptData.commands];
-                                const updatedSteps = [...command.steps];
-                                updatedSteps[sIdx] = {
-                                  ...step,
-                                  [key]: e.target.value,
-                                };
-                                updatedCommands[cIdx] = {
-                                  ...command,
-                                  steps: updatedSteps,
-                                };
-                                setScriptData({
-                                  ...scriptData,
-                                  commands: updatedCommands,
-                                });
-                              }}
-                            />
-                          )}
-                        </label>
+                    <label>
+                      <span>アクション（コマンド）</span>
+                      <div className="chip-row">
+                        {rule.action.length === 0 && (
+                          <span className="chip muted">アクションなし</span>
+                        )}
+                        {rule.action.map((action) => {
+                          const isUnknown =
+                            !scriptValidation.commandNameSet.has(action);
+                          return (
+                            <button
+                              type="button"
+                              key={`${rule.id}-${action}`}
+                              className={`chip clickable ${isUnknown ? "unknown" : ""}`}
+                              onClick={() => removeRuleAction(idx, action)}
+                              title="クリックで削除"
+                            >
+                              {action} ×
+                            </button>
+                          );
+                        })}
                       </div>
-                    ))}
+                      <div className="action-row">
+                        <select
+                          value={actionDrafts[idx] ?? ""}
+                          onChange={(e) =>
+                            setActionDrafts((prev) => ({
+                              ...prev,
+                              [idx]: e.target.value,
+                            }))
+                          }
+                          disabled={commandNames.length === 0}
+                        >
+                          <option value="">アクションを追加...</option>
+                          {commandNames.map((name) => (
+                            <option key={`${rule.id}-${name}`} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const selected = actionDrafts[idx];
+                            if (!selected) return;
+                            addRuleAction(idx, selected);
+                            setActionDrafts((prev) => ({ ...prev, [idx]: "" }));
+                          }}
+                          disabled={!actionDrafts[idx]}
+                        >
+                          追加
+                        </button>
+                      </div>
+                    </label>
                     <button
                       type="button"
+                      className="btn-danger btn-sm"
                       onClick={() => {
-                        const newKey = window.prompt("新しいフィールド名（例: SAY）");
-                        if (!newKey) return;
-                        const updatedCommands = [...scriptData.commands];
-                        const updatedSteps = [...command.steps];
-                        updatedSteps[sIdx] = { ...step, [newKey]: "" };
-                        updatedCommands[cIdx] = {
-                          ...command,
-                          steps: updatedSteps,
-                        };
-                        setScriptData({ ...scriptData, commands: updatedCommands });
+                        const updated = scriptData.negative_rules.filter(
+                          (_, ridx) => ridx !== idx
+                        );
+                        setScriptData({
+                          ...scriptData,
+                          negative_rules: updated,
+                        });
                       }}
                     >
-                      Add Field
+                      ルールを削除
                     </button>
                   </div>
                 ))}
                 <button
                   type="button"
-                  onClick={() => {
-                    const updatedCommands = [...scriptData.commands];
-                    updatedCommands[cIdx] = {
-                      ...command,
-                      steps: [...command.steps, { SAY: "" }],
-                    };
-                    setScriptData({ ...scriptData, commands: updatedCommands });
-                  }}
+                  onClick={() =>
+                    setScriptData({
+                      ...scriptData,
+                      negative_rules: [
+                        ...scriptData.negative_rules,
+                        { id: "NEW_RULE", when: "", action: [] },
+                      ],
+                    })
+                  }
                 >
-                  Add Step
+                  ネガティブルールを追加
                 </button>
+
+                <h3>コマンド一覧</h3>
+                <div className="command-meta">
+                  <span>{commandNames.length} 件のコマンド</span>
+                  <input
+                    type="text"
+                    placeholder="🔍 コマンドを検索..."
+                    value={commandFilter}
+                    onChange={(e) => setCommandFilter(e.target.value)}
+                  />
+                </div>
+                <div className="command-list">
+                  {filteredCommands.length === 0 && (
+                    <span className="chip muted">該当なし</span>
+                  )}
+                  {filteredCommands.map((name) => (
+                    <span key={`known-${name}`} className="chip">
+                      {name}
+                    </span>
+                  ))}
+                </div>
+                {knownStepKeys.length > 0 && (
+                  <p className="helper-text">
+                    利用可能なステップキー: {knownStepKeys.join(", ")}
+                  </p>
+                )}
+                {scriptValidation.issues.length > 0 && (
+                  <div className="script-issues">
+                    <strong>⚠️ 保存前に修正してください</strong>
+                    <ul>
+                      {scriptValidation.issues.map((issue) => (
+                        <li key={issue}>{issue}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {commandSections.map((section) => (
+                  <div className="command-section" key={section.title}>
+                    <div className="command-section-header">
+                      <h4>{section.title}</h4>
+                      <span>{section.commands.length} コマンド</span>
+                    </div>
+                    {section.commands.map((command) => {
+                      const cIdx = scriptData.commands.indexOf(command);
+                      return (
+                        <div
+                          className="command-card"
+                          key={`${command.name}-${cIdx}`}
+                        >
+                          <div className="command-title">
+                            <h4>{command.name.trim() || "名前未設定"}</h4>
+                            <div className="command-title-actions">
+                              <button
+                                type="button"
+                                className="btn-sm"
+                                onClick={() => {
+                                  const newName = window.prompt(
+                                    "コマンド名を入力してください",
+                                    command.name
+                                  );
+                                  if (newName === null) return;
+                                  const updated = [...scriptData.commands];
+                                  updated[cIdx] = {
+                                    ...command,
+                                    name: newName.trim(),
+                                  };
+                                  setScriptData({
+                                    ...scriptData,
+                                    commands: updated,
+                                  });
+                                }}
+                              >
+                                名前変更
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-danger btn-sm"
+                                onClick={() =>
+                                  setScriptData({
+                                    ...scriptData,
+                                    commands: scriptData.commands.filter(
+                                      (_, idx) => idx !== cIdx
+                                    ),
+                                  })
+                                }
+                              >
+                                削除
+                              </button>
+                            </div>
+                          </div>
+                          {command.steps.map((step, sIdx) => (
+                            <div
+                              className="command-step"
+                              key={`${command.name}-${sIdx}`}
+                            >
+                              <div className="command-step-header">
+                                <span>ステップ {sIdx + 1}</span>
+                                <button
+                                  type="button"
+                                  className="btn-sm btn-danger"
+                                  onClick={() => {
+                                    const updatedCommands = [
+                                      ...scriptData.commands,
+                                    ];
+                                    const newSteps = command.steps.filter(
+                                      (_, idx) => idx !== sIdx
+                                    );
+                                    updatedCommands[cIdx] = {
+                                      ...command,
+                                      steps: newSteps,
+                                    };
+                                    setScriptData({
+                                      ...scriptData,
+                                      commands: updatedCommands,
+                                    });
+                                  }}
+                                >
+                                  ステップ削除
+                                </button>
+                              </div>
+                              {Object.entries(step).map(([key, value]) => (
+                                <div
+                                  className="step-field"
+                                  key={`${key}-${sIdx}`}
+                                >
+                                  <label>
+                                    <span>{key}</span>
+                                    {typeof value === "boolean" ? (
+                                      <input
+                                        type="checkbox"
+                                        checked={value}
+                                        onChange={(e) => {
+                                          const updatedCommands = [
+                                            ...scriptData.commands,
+                                          ];
+                                          const updatedSteps = [
+                                            ...command.steps,
+                                          ];
+                                          updatedSteps[sIdx] = {
+                                            ...step,
+                                            [key]: e.target.checked,
+                                          };
+                                          updatedCommands[cIdx] = {
+                                            ...command,
+                                            steps: updatedSteps,
+                                          };
+                                          setScriptData({
+                                            ...scriptData,
+                                            commands: updatedCommands,
+                                          });
+                                        }}
+                                      />
+                                    ) : (
+                                      <input
+                                        type="text"
+                                        value={String(value)}
+                                        onChange={(e) => {
+                                          const updatedCommands = [
+                                            ...scriptData.commands,
+                                          ];
+                                          const updatedSteps = [
+                                            ...command.steps,
+                                          ];
+                                          updatedSteps[sIdx] = {
+                                            ...step,
+                                            [key]: e.target.value,
+                                          };
+                                          updatedCommands[cIdx] = {
+                                            ...command,
+                                            steps: updatedSteps,
+                                          };
+                                          setScriptData({
+                                            ...scriptData,
+                                            commands: updatedCommands,
+                                          });
+                                        }}
+                                      />
+                                    )}
+                                  </label>
+                                </div>
+                              ))}
+                              <div className="step-actions">
+                                <button
+                                  type="button"
+                                  className="btn-sm"
+                                  onClick={() =>
+                                    addStepField(cIdx, sIdx, "SAY", "")
+                                  }
+                                  disabled={"SAY" in step}
+                                >
+                                  + SAY
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-sm"
+                                  onClick={() =>
+                                    addStepField(
+                                      cIdx,
+                                      sIdx,
+                                      "ARM_POINT_CENTER",
+                                      true
+                                    )
+                                  }
+                                  disabled={"ARM_POINT_CENTER" in step}
+                                >
+                                  + ARM_POINT_CENTER
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-sm"
+                                  onClick={() => {
+                                    const newKey = window.prompt(
+                                      "新しいフィールド名（例: SAY）"
+                                    );
+                                    if (!newKey) return;
+                                    addStepField(cIdx, sIdx, newKey, "");
+                                  }}
+                                >
+                                  + カスタム
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                          <button
+                            type="button"
+                            className="btn-sm"
+                            onClick={() => {
+                              const updatedCommands = [...scriptData.commands];
+                              updatedCommands[cIdx] = {
+                                ...command,
+                                steps: [...command.steps, { SAY: "" }],
+                              };
+                              setScriptData({
+                                ...scriptData,
+                                commands: updatedCommands,
+                              });
+                            }}
+                          >
+                            + ステップを追加
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setScriptData({
+                      ...scriptData,
+                      commands: [
+                        ...scriptData.commands,
+                        {
+                          name: `command_${scriptData.commands.length + 1}`,
+                          steps: [{ SAY: "" }],
+                        },
+                      ],
+                    })
+                  }
+                >
+                  + 新規コマンド
+                </button>
+
+                <div className="script-actions">
+                  <button
+                    type="button"
+                    onClick={loadScript}
+                    disabled={scriptLoading}
+                  >
+                    リロード
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-success"
+                    onClick={saveScript}
+                    disabled={
+                      scriptLoading || scriptValidation.issues.length > 0
+                    }
+                  >
+                    保存
+                  </button>
+                </div>
+
+                <details className="raw-yaml">
+                  <summary>📄 YAML プレビュー</summary>
+                  <pre>{rawYaml}</pre>
+                </details>
               </div>
-            ))}
-            <button
-              type="button"
-              onClick={() =>
-                setScriptData({
-                  ...scriptData,
-                  commands: [
-                    ...scriptData.commands,
-                    {
-                      name: `command_${scriptData.commands.length + 1}`,
-                      steps: [{ SAY: "" }],
-                    },
-                  ],
-                })
-              }
-            >
-              Add Command
-            </button>
-
-            <div className="script-actions">
-              <button type="button" onClick={loadScript} disabled={scriptLoading}>
-                Reload
-              </button>
-              <button type="button" onClick={saveScript} disabled={scriptLoading}>
-                Save
-              </button>
-            </div>
-
-            <details className="raw-yaml">
-              <summary>YAML Preview</summary>
-              <pre>{rawYaml}</pre>
-            </details>
-          </div>
-        )}
-      </Section>
-    </main>
+            )}
+          </Section>
+        </div>
+      </main>
+    </div>
   );
 }
 
