@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import uvicorn
 
-from .config import load_settings
-from .server import create_app
+try:
+    from .config import load_settings
+    from .server import create_app
+except ImportError:  # fallback when executed as a script
+    sys.path.append(str(Path(__file__).resolve().parent.parent))
+    from teacharm.config import load_settings
+    from teacharm.server import create_app
 
 
 def run() -> None:
