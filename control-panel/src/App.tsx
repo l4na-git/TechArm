@@ -32,8 +32,17 @@ type ScriptData = {
     tone: string;
     rules: string[];
   };
+  intent: IntentConfig;
   negative_rules: NegativeRule[];
   commands: CommandEntry[];
+};
+
+type IntentConfig = {
+  greeting_reply: string;
+  fallback_reply: string;
+  greeting_terms: string[];
+  on_topic: string[];
+  off_topic: string[];
 };
 
 type NegativeRule = {
@@ -712,6 +721,97 @@ export default function App() {
                   />
                 </label>
 
+                <h3>トピック判定</h3>
+                <label>
+                  <span>挨拶時の返答</span>
+                  <input
+                    type="text"
+                    value={scriptData.intent.greeting_reply}
+                    onChange={(e) =>
+                      setScriptData({
+                        ...scriptData,
+                        intent: {
+                          ...scriptData.intent,
+                          greeting_reply: e.target.value,
+                        },
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  <span>フォールバック返答</span>
+                  <input
+                    type="text"
+                    value={scriptData.intent.fallback_reply}
+                    onChange={(e) =>
+                      setScriptData({
+                        ...scriptData,
+                        intent: {
+                          ...scriptData.intent,
+                          fallback_reply: e.target.value,
+                        },
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  <span>挨拶語（1行に1語）</span>
+                  <textarea
+                    rows={4}
+                    value={scriptData.intent.greeting_terms.join("\n")}
+                    onChange={(e) =>
+                      setScriptData({
+                        ...scriptData,
+                        intent: {
+                          ...scriptData.intent,
+                          greeting_terms: e.target.value
+                            .split("\n")
+                            .map((line) => line.trim())
+                            .filter(Boolean),
+                        },
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  <span>ON_TOPIC 例（1行に1項目）</span>
+                  <textarea
+                    rows={4}
+                    value={scriptData.intent.on_topic.join("\n")}
+                    onChange={(e) =>
+                      setScriptData({
+                        ...scriptData,
+                        intent: {
+                          ...scriptData.intent,
+                          on_topic: e.target.value
+                            .split("\n")
+                            .map((line) => line.trim())
+                            .filter(Boolean),
+                        },
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  <span>OFF_TOPIC 例（1行に1項目）</span>
+                  <textarea
+                    rows={4}
+                    value={scriptData.intent.off_topic.join("\n")}
+                    onChange={(e) =>
+                      setScriptData({
+                        ...scriptData,
+                        intent: {
+                          ...scriptData.intent,
+                          off_topic: e.target.value
+                            .split("\n")
+                            .map((line) => line.trim())
+                            .filter(Boolean),
+                        },
+                      })
+                    }
+                  />
+                </label>
+
                 <h3>ネガティブルール</h3>
                 {scriptData.negative_rules.map((rule, idx) => (
                   <div className="negative-rule" key={idx}>
@@ -1114,6 +1214,10 @@ export default function App() {
                     保存
                   </button>
                 </div>
+                <p className="helper-text">
+                  保存内容は即時反映されます。反映されない場合は API の再起動
+                  （コード変更時）や API Base の接続先を確認してください。
+                </p>
 
                 <details className="raw-yaml">
                   <summary>📄 YAML プレビュー</summary>
@@ -1135,6 +1239,34 @@ function normalizeScript(data: Record<string, any>): ScriptData {
     tone: rawRole.tone ?? "",
     rules: Array.isArray(rawRole.rules) ? rawRole.rules : [],
   };
+  const rawIntent = data.intent ?? {};
+  const intent = {
+    greeting_reply:
+      rawIntent.greeting_reply ??
+      "こんにちは！今日はどの教材の、どのあたりで困ってる？（文章/選択肢/言葉など）",
+    fallback_reply:
+      rawIntent.fallback_reply ??
+      "どの教材のどこが気になる？（文章/選択肢/言葉）",
+    greeting_terms: Array.isArray(rawIntent.greeting_terms)
+      ? rawIntent.greeting_terms
+      : ["こんにちは", "おはよう", "こんばんは", "やあ", "はじめまして", "こんちは"],
+    on_topic: Array.isArray(rawIntent.on_topic)
+      ? rawIntent.on_topic
+      : [
+          "教材の内容",
+          "問題",
+          "このアプリの使い方",
+          "学習の進め方",
+          "TeachArmの操作",
+        ],
+    off_topic: Array.isArray(rawIntent.off_topic)
+      ? rawIntent.off_topic
+      : [
+          "ゲームに誘う",
+          "雑談を続ける",
+          "学習と無関係な話題（天気/恋バナ/暇つぶし等）",
+        ],
+  };
   const negative =
     Array.isArray(data.negative_rules) && data.negative_rules.length > 0
       ? data.negative_rules.map((rule: any) => ({
@@ -1151,6 +1283,7 @@ function normalizeScript(data: Record<string, any>): ScriptData {
   }));
   return {
     role,
+    intent,
     negative_rules: negative,
     commands: commandsEntries,
   };
@@ -1166,6 +1299,7 @@ function denormalizeScript(script: ScriptData): Record<string, any> {
   );
   return {
     role: script.role,
+    intent: script.intent,
     negative_rules: script.negative_rules,
     commands,
   };

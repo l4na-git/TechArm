@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import json
 from dataclasses import dataclass
 from typing import Dict, List
 
@@ -40,18 +42,65 @@ class DialogueService:
         return await self._run_commands(command_names, source="script")
 
     async def on_text(self, user_text: str) -> DialogueResponse:
-        # Negative rule check
-        lowered = user_text.lower()
-        for rule in self._scripts.negative_rules:
-            if "関係" in rule.when and "?" not in lowered:
-                return await self._run_commands(rule.action, source="negative")
-        role_content = f"{self._scripts.role.name}:{self._scripts.role.tone}"
-        return await self._call_llm(
+        text = user_text.strip()
+        intent_cfg = self._scripts.intent
+
+        # 1) Greeting is always allowed.
+        if self._is_greeting(text, intent_cfg.greeting_terms):
+            msg = intent_cfg.greeting_reply
+            return DialogueResponse(
+                text=msg, commands=[{"SAY": msg}], source="script"
+            )
+
+        # 2) Ask LLM to classify intent via JSON.
+        role = self._scripts.role
+        on_topic = "\n".join([f"- {item}" for item in intent_cfg.on_topic])
+        off_topic = "\n".join([f"- {item}" for item in intent_cfg.off_topic])
+        system = "\n".join(
             [
-                {"role": "system", "content": role_content},
-                {"role": "user", "content": user_text},
+                f"あなたは{role.name}。口調:{role.tone}。",
+                "次のJSONだけを返して。他の文字は絶対に出さない。",
+                '{"intent":"GREETING|ON_TOPIC|OFF_TOPIC","reply":"..."}',
+                "intentの基準:",
+                "- GREETING: 挨拶、短い返事",
+                "- ON_TOPIC: 教材の内容/問題/このアプリの使い方/学習の進め方/TeachArmの操作など",
+                "- OFF_TOPIC: ゲームに誘う、雑談を続ける、学習と無関係な話題（天気/恋バナ/暇つぶし等）",
+                "ON_TOPICの具体例:",
+                on_topic,
+                "OFF_TOPICの具体例:",
+                off_topic,
+                "ON_TOPICの返答ルール:",
+                *[f"- {r}" for r in role.rules],
+                "OFF_TOPICのとき reply は短く断って、学習に戻す質問を1つ添える。",
             ]
         )
+
+        raw = await self._call_llm(
+            [{"role": "system", "content": system}, {"role": "user", "content": text}]
+        )
+
+        intent = "ON_TOPIC"
+        reply = raw.text
+        try:
+            obj = json.loads(raw.text)
+            intent = obj.get("intent", "ON_TOPIC")
+            reply = obj.get("reply", "") or ""
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 3) OFF_TOPIC is forced to negative command.
+        if intent == "OFF_TOPIC":
+            return await self._run_commands(["SAY_OUT_OF_SCOPE"], source="negative")
+
+        if not reply:
+            reply = intent_cfg.fallback_reply
+        return DialogueResponse(text=reply, commands=[], source="llm")
+
+    @staticmethod
+    def _is_greeting(text: str, terms: List[str]) -> bool:
+        if len(text) > 20:
+            return False
+        return any(word in text for word in terms)
 
     async def _run_commands(
         self, names: List[str], source: str
