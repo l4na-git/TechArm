@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Dict, List
 
@@ -44,8 +45,8 @@ class DialogueService:
         text = user_text.strip()
         intent_cfg = self._scripts.intent
 
-        # 1) Greeting is always allowed.
-        if self._is_greeting(text, intent_cfg.greeting_terms):
+        # 1) Greeting-only is always allowed.
+        if self._is_greeting_only(text, intent_cfg.greeting_terms):
             msg = intent_cfg.greeting_reply
             return DialogueResponse(
                 text=msg, commands=[{"SAY": msg}], source="script"
@@ -96,10 +97,11 @@ class DialogueService:
         return DialogueResponse(text=reply, commands=[], source="llm")
 
     @staticmethod
-    def _is_greeting(text: str, terms: List[str]) -> bool:
-        if len(text) > 20:
+    def _is_greeting_only(text: str, terms: List[str]) -> bool:
+        if len(text) > 30:
             return False
-        return any(word in text for word in terms)
+        normalized = re.sub(r"[\s、。,.!！?？ー-]", "", text)
+        return any(normalized == word for word in terms)
 
     async def _run_commands(
         self, names: List[str], source: str
@@ -123,9 +125,11 @@ class DialogueService:
             "model": self._settings.ollama_model,
             "messages": messages,
             "stream": False,
+            "format": "json",
+            "options": {"temperature": 0, "num_predict": 120}
         }
         try:
-            async with httpx.AsyncClient(timeout=3.0) as client:
+            async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(url, json=payload)
                 response.raise_for_status()
                 data = response.json()
