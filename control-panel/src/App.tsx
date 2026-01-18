@@ -36,6 +36,7 @@ type Region = {
 
 type MaterialData = {
   material_id: string;
+  pdf_file?: string;
   regions: Region[];
 };
 
@@ -319,6 +320,10 @@ export default function App() {
       setEditingMaterial(data);
       setEditingMaterialId(materialId);
       setSelectedRegionIndex(null);
+      // 対応するPDFファイルを自動選択
+      if (data.pdf_file && materialAssets.includes(data.pdf_file)) {
+        setEditingPdf(data.pdf_file);
+      }
       appendLog(`Loaded material ${materialId} for editing`);
     } catch (err) {
       appendLog(`Failed to load material: ${(err as Error).message}`);
@@ -1243,22 +1248,13 @@ export default function App() {
                 <div className="material-editor-content">
                   <div className="material-editor-left">
                     <h3>PDF プレビュー</h3>
-                    <label>
-                      <span>PDF ファイルを選択</span>
-                      <select
-                        value={editingPdf}
-                        onChange={(e) => setEditingPdf(e.target.value)}
-                      >
-                        <option value="">-- PDFを選択 --</option>
-                        {materialAssets.map((name) => (
-                          <option key={name} value={name}>
-                            {name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    {editingMaterial.pdf_file && (
+                      <p className="helper-text">
+                        📄 {editingMaterial.pdf_file}
+                      </p>
+                    )}
 
-                    {editingPdf && (
+                    {editingMaterial.pdf_file && (
                       <div
                         className="material-pdf-container"
                         onMouseDown={handlePdfMouseDown}
@@ -1270,13 +1266,15 @@ export default function App() {
                           setResizingRegion(null);
                         }}
                       >
-                        <embed
-                          src={`${API_BASE}/api/materials/assets/${encodeURIComponent(
-                            editingPdf,
-                          )}`}
+                        <object
+                          data={`${API_BASE}/api/materials/assets/${encodeURIComponent(
+                            editingMaterial.pdf_file,
+                          )}#toolbar=0&navpanes=0&scrollbar=0`}
                           type="application/pdf"
                           className="material-pdf-frame"
-                        />
+                        >
+                          <p>PDFを表示できません</p>
+                        </object>
                         <div className="material-pdf-overlay">
                           {/* 既存の領域を表示 */}
                           {editingMaterial.regions.map((region, idx) => (
@@ -1294,6 +1292,7 @@ export default function App() {
                               onMouseDown={(e) => {
                                 e.stopPropagation();
                                 setSelectedRegionIndex(idx);
+                                setResizingRegion(null); // 前のリサイズ状態をクリア
                                 // 矩形本体をドラッグで移動
                                 const rect = e.currentTarget.parentElement!.getBoundingClientRect();
                                 const x = clamp01((e.clientX - rect.left) / rect.width);
@@ -1308,7 +1307,7 @@ export default function App() {
                               }}
                             >
                               <span className="material-region-label">
-                                {region.id}
+                                {region.id} {selectedRegionIndex === idx ? "✓" : ""}
                               </span>
                               {/* リサイズハンドル (選択中のみ表示) */}
                               {selectedRegionIndex === idx && (
@@ -1365,7 +1364,10 @@ export default function App() {
                           className={`material-region-item ${
                             selectedRegionIndex === idx ? "selected" : ""
                           }`}
-                          onClick={() => setSelectedRegionIndex(idx)}
+                          onClick={() => {
+                            setSelectedRegionIndex(idx);
+                            setResizingRegion(null); // 前のリサイズ状態をクリア
+                          }}
                         >
                           <div className="material-region-header">
                             <strong>{region.id}</strong>
@@ -1404,10 +1406,13 @@ export default function App() {
                                     updateRegion(idx, { type: e.target.value })
                                   }
                                 >
-                                  <option value="question">question</option>
-                                  <option value="line">line</option>
-                                  <option value="word">word</option>
-                                  <option value="diagram">diagram</option>
+                                  <option value="instruction">instruction (大問指示)</option>
+                                  <option value="question">question (設問)</option>
+                                  <option value="choice">choice (選択肢)</option>
+                                  <option value="paragraph">paragraph (段落)</option>
+                                  <option value="line">line (行)</option>
+                                  <option value="word">word (単語)</option>
+                                  <option value="diagram">diagram (図表)</option>
                                 </select>
                               </label>
                               <label>

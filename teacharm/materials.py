@@ -46,6 +46,7 @@ class Material(BaseModel):
     """Material definition loaded from JSON."""
 
     material_id: str
+    pdf_file: Optional[str] = None
     regions: List[Region]
 
     def find_hit_regions(self, u: float, v: float) -> List[Region]:
@@ -62,7 +63,15 @@ class Material(BaseModel):
         return None
 
 
-PRIORITY = {"question": 0, "line": 1, "word": 2}
+PRIORITY = {
+    "instruction": 0,  # 大問の指示文（最優先）
+    "question": 1,      # 設問
+    "choice": 2,        # 選択肢
+    "paragraph": 3,     # 段落
+    "line": 4,          # 行
+    "word": 5,          # 単語
+    "diagram": 6,       # 図表
+}
 
 
 def select_best_region(regions: Sequence[Region]) -> Optional[Region]:
