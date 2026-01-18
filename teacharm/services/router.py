@@ -82,45 +82,146 @@ class RouterService:
 
         try:
             raw_response = await self._call_function_gemma(router_input)
+            logger.info("FunctionGemma raw response: %s", raw_response)
             parsed = self._parse_and_validate(raw_response)
             if parsed:
+                logger.info("FunctionGemma parsed action: %s", parsed["action"])
                 return RouterOutput(
                     action=parsed["action"],
                     args=parsed.get("args", {}),
                     raw_response=raw_response,
                     fallback_used=False,
                 )
+            else:
+                logger.warning("FunctionGemma response failed validation")
         except Exception as e:
             logger.warning("FunctionGemma call failed: %s", e)
 
         # Fallback to rule-based routing
         self._fallback_count += 1
+        logger.info("Using fallback routing for input: %s", router_input.to_dict())
         return self._fallback_route(router_input)
 
     async def _call_function_gemma(self, router_input: RouterInput) -> str:
-        """Call FunctionGemma API and return raw JSON string."""
-        system_prompt = self._build_system_prompt()
-        user_message = json.dumps(router_input.to_dict(), ensure_ascii=False)
+        """Call FunctionGemma API using Ollama's /api/chat endpoint with tools."""
+        # Build user message in English for better tool calling
+        input_data = router_input.to_dict()
+        user_text = input_data.get("asr_text", "")
+        state = input_data.get("state", "IDLE")
+        current_region = input_data.get("current_region_id")
+        
+        user_message = f"User request: '{user_text}'. What should the system do?"
+
+        # Define available actions as tools (order matters - reject first for priority)
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "reject",
+                    "description": "Reject requests about games, playing, chatting, personal information, age, location, or anything unrelated to learning. Examples: 'let's play a game', 'I'm bored', 'how old are you', 'where do you live'",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "reason": {
+                                "type": "string",
+                                "description": "Why rejected: out_of_scope, inappropriate, or personal_info"
+                            }
+                        },
+                        "required": ["reason"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "respond_script",
+                    "description": "Use when user asks about learning content or points to a specific question/text on the material",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "mode": {
+                                "type": "string",
+                                "description": "point for explanation, help for hints"
+                            }
+                        },
+                        "required": ["mode"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "repeat_last",
+                    "description": "Use when user asks to repeat or say again",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "clarify",
+                    "description": "Use when user request is unclear or ambiguous",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }
+            }
+        ]
 
         payload = {
             "model": self._model,
             "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
+                # Few-shot examples to guide the model
+                {"role": "user", "content": "User request: 'let's play a game'. What should the system do?"},
+                {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "reject", "arguments": {"reason": "out_of_scope"}}}]},
+                {"role": "user", "content": "User request: 'I'm bored'. What should the system do?"},
+                {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "reject", "arguments": {"reason": "out_of_scope"}}}]},
+                {"role": "user", "content": "User request: 'how old are you?'. What should the system do?"},
+                {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "reject", "arguments": {"reason": "personal_info"}}}]},
+                {"role": "user", "content": "User request: 'explain this question'. What should the system do?"},
+                {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "respond_script", "arguments": {"mode": "point"}}}]},
+                {"role": "user", "content": "User request: 'say that again'. What should the system do?"},
+                {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "repeat_last", "arguments": {}}}]},
+                # Actual user request
+                {"role": "user", "content": user_message}
             ],
-            "temperature": 0.1,
-            "max_tokens": 200,
+            "tools": tools,
+            "stream": False,
         }
 
+        logger.debug("Calling FunctionGemma with model: %s", self._model)
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(
-                f"{self._base_url}/v1/chat/completions",
+                f"{self._base_url}/api/chat",
                 json=payload,
             )
             response.raise_for_status()
             data = response.json()
-            content = data["choices"][0]["message"]["content"]
-            return content.strip()
+            logger.info("FunctionGemma API response: %s", data)
+            
+            # Check if tool_calls exist
+            message = data.get("message", {})
+            tool_calls = message.get("tool_calls")
+            
+            if tool_calls and len(tool_calls) > 0:
+                # Extract first tool call
+                tool_call = tool_calls[0]
+                function_data = tool_call.get("function", {})
+                action = function_data.get("name")
+                args = function_data.get("arguments", {})
+                
+                # Return as JSON
+                result = {"action": action, "args": args}
+                return json.dumps(result, ensure_ascii=False)
+            else:
+                # No tool call, return empty (will trigger fallback)
+                logger.warning("No tool_calls in FunctionGemma response, message content: %s", 
+                             message.get("content", ""))
+                return ""
 
     def _build_system_prompt(self) -> str:
         """Build system prompt for FunctionGemma."""
@@ -139,20 +240,24 @@ current_region_id等)から、次に実行すべきactionを決定してくだ�
 - generate_explanation: 台本が無い場合にDeepSeekで生成
   {"style": "hint"|"explain", "region_id": "..."}
 - reject: 学習外・個人情報・不適切要求を拒否
-  {"reason": "..."}
+  {"reason": "out_of_scope"|"inappropriate"|"personal_info"}
 - clarify: regionが特定できない等、聞き返し
   {"question": "..."}
 - recover_suggest: エラー復帰誘導 {"error_code": "..."}
 
 判定優先順位:
 1. error_code != null → recover_suggest
-2. コマンド(もう一回/次/ヒント) →
+2. asr_textが学習外の内容（ゲーム、雑談、個人情報等） → reject
+   例: 「ゲームしよう」「遊ぼう」「何歳？」「どこに住んでる？」
+3. コマンド(もう一回/次/ヒント) →
    repeat_last / next_region / respond_script
-3. current_region_id があり region.script が使える →
+4. current_region_id があり region.script が使える →
    respond_script
-4. current_region_id があるが台本が無い →
+5. current_region_id があるが台本が無い →
    generate_explanation
-5. 上記以外 → clarify または reject
+6. 上記以外 → clarify
+
+重要: 学習（教材の問題や文章）に関係ない要求は必ずrejectすること。
 
 JSONのみを出力し、他の文字は一切含めないでください。"""
 
@@ -190,6 +295,21 @@ JSONのみを出力し、他の文字は一切含めないでください。"""
                 raw_response="fallback",
                 fallback_used=True,
             )
+
+        # Check for out-of-scope requests (simple pattern matching)
+        if router_input.asr_text:
+            text_lower = router_input.asr_text.lower()
+            out_of_scope_keywords = [
+                "ゲーム", "遊", "暇", "雑談", "天気", "何歳", "年齢", 
+                "どこ住", "住所", "電話", "名前", "恋", "好き", "彼女", "彼氏"
+            ]
+            if any(keyword in text_lower for keyword in out_of_scope_keywords):
+                return RouterOutput(
+                    action="reject",
+                    args={"reason": "out_of_scope"},
+                    raw_response="fallback",
+                    fallback_used=True,
+                )
 
         # Has current region
         if router_input.current_region_id:

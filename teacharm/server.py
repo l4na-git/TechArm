@@ -232,6 +232,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.post("/api/dialogue")
     async def dialogue(payload: DialoguePayload) -> dict:
+        logger.info("Dialogue request received: %s", payload.text)
         current_material = ctx.repository.current
         if not current_material:
             raise HTTPException(
@@ -249,6 +250,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             current_region=current_region,
             state="IDLE" if not current_region else "TARGET_SELECTED",
         )
+        logger.info("Dialogue response: %s (source: %s, action: %s)", 
+                   dialogue_resp.text, dialogue_resp.source, dialogue_resp.router_action)
         audio = None
         if dialogue_resp.text:
             audio = await ctx.tts.synthesize(dialogue_resp.text)
