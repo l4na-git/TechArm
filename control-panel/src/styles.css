@@ -993,3 +993,203 @@ button.btn-icon {
     height: 420px;
   }
 }
+/* ===== Material Editor ===== */
+.material-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.material-editor-header {
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.material-editor-header label {
+  flex: 1;
+  min-width: 200px;
+}
+
+.material-editor-content {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+}
+
+.material-editor-left,
+.material-editor-right {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.material-pdf-container {
+  position: relative;
+  width: 100%;
+  height: 600px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  cursor: crosshair;
+}
+
+.material-pdf-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+  pointer-events: none;
+}
+
+.material-pdf-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.material-region-box {
+  position: absolute;
+  border: 2px solid var(--accent-blue);
+  background: rgba(47, 129, 247, 0.1);
+  pointer-events: auto;
+  cursor: move;
+  transition: all var(--transition-fast);
+}
+
+.material-region-box:hover {
+  background: rgba(47, 129, 247, 0.2);
+  border-color: var(--accent-green-text);
+}
+
+.material-region-box.selected {
+  border-color: var(--accent-green-text);
+  background: rgba(126, 231, 135, 0.15);
+  border-width: 3px;
+  cursor: move;
+}
+
+.material-region-box.drawing {
+  border-color: var(--accent-red-text);
+  background: rgba(255, 123, 114, 0.1);
+  cursor: crosshair;
+}
+
+.material-resize-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: white;
+  border: 2px solid var(--accent-green);
+  border-radius: 50%;
+  z-index: 10;
+  pointer-events: auto;
+}
+
+.material-resize-handle:hover {
+  background: var(--accent-green-text);
+  transform: scale(1.2);
+}
+
+.material-resize-handle.handle-nw {
+  top: -6px;
+  left: -6px;
+  cursor: nw-resize;
+}
+
+.material-resize-handle.handle-ne {
+  top: -6px;
+  right: -6px;
+  cursor: ne-resize;
+}
+
+.material-resize-handle.handle-sw {
+  bottom: -6px;
+  left: -6px;
+  cursor: sw-resize;
+}
+
+.material-resize-handle.handle-se {
+  bottom: -6px;
+  right: -6px;
+  cursor: se-resize;
+}
+
+.material-region-label {
+  position: absolute;
+  top: -1.5rem;
+  left: 0;
+  background: var(--accent-blue);
+  color: white;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.material-region-box.selected .material-region-label {
+  background: var(--accent-green);
+}
+
+.material-regions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.material-region-item {
+  background: var(--bg-tertiary);
+  border: 2px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.material-region-item:hover {
+  border-color: var(--accent-blue);
+}
+
+.material-region-item.selected {
+  border-color: var(--accent-green-text);
+  background: rgba(126, 231, 135, 0.05);
+}
+
+.material-region-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.material-region-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-muted);
+}
+
+.bbox-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+}
+
+@media (max-width: 1024px) {
+  .material-editor-content {
+    grid-template-columns: 1fr;
+  }
+
+  .material-pdf-container {
+    height: 400px;
+  }
+}

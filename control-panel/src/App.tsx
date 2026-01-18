@@ -18,6 +18,27 @@ type MaterialAssets = {
   files: string[];
 };
 
+type BoundingBox = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
+
+type Region = {
+  id: string;
+  type: string;
+  label?: string;
+  bbox: BoundingBox;
+  on_point: string[];
+  on_help: string[];
+};
+
+type MaterialData = {
+  material_id: string;
+  regions: Region[];
+};
+
 type HealthResponse = {
   status: string;
   active_material: string | null;
@@ -185,6 +206,26 @@ export default function App() {
   const [rawYaml, setRawYaml] = useState("");
   const [commandFilter, setCommandFilter] = useState("");
   const [actionDrafts, setActionDrafts] = useState<Record<number, string>>({});
+  
+  // Material editor state
+  const [editingMaterial, setEditingMaterial] = useState<MaterialData | null>(null);
+  const [editingMaterialId, setEditingMaterialId] = useState<string>("");
+  const [editingPdf, setEditingPdf] = useState<string>("");
+  const [selectedRegionIndex, setSelectedRegionIndex] = useState<number | null>(null);
+  const [drawingRect, setDrawingRect] = useState<{
+    startX: number;
+    startY: number;
+    endX: number;
+    endY: number;
+  } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [resizingRegion, setResizingRegion] = useState<{
+    index: number;
+    handle: "nw" | "ne" | "sw" | "se" | "move";
+    startX: number;
+    startY: number;
+    originalBbox: BoundingBox;
+  } | null>(null);
 
   const appendLog = useCallback((message: string) => {
     setLog((prev) => [
@@ -270,6 +311,158 @@ export default function App() {
     }, 5000);
     return () => clearInterval(timer);
   }, []);
+
+  // Material editor functions
+  const loadMaterialForEdit = async (materialId: string) => {
+    try {
+      const data = await fetchJSON<MaterialData>(`/api/materials/${materialId}`);
+      setEditingMaterial(data);
+      setEditingMaterialId(materialId);
+      setSelectedRegionIndex(null);
+      appendLog(`Loaded material ${materialId} for editing`);
+    } catch (err) {
+      appendLog(`Failed to load material: ${(err as Error).message}`);
+    }
+  };
+
+  const saveMaterial = async () => {
+    if (!editingMaterial) return;
+    try {
+      await fetchJSON(`/api/materials/${editingMaterial.material_id}`, {
+        method: "PUT",
+        body: JSON.stringify(editingMaterial),
+      });
+      appendLog(`Saved material ${editingMaterial.material_id}`);
+      await loadMaterials();
+    } catch (err) {
+      appendLog(`Save error: ${(err as Error).message}`);
+    }
+  };
+
+  const handlePdfMouseDown = (e: MouseEvent<HTMLDivElement>) => {
+    // リサイズ・移動中は新規描画しない
+    if (resizingRegion) return;
+    
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = clamp01((e.clientX - rect.left) / rect.width);
+    const y = clamp01((e.clientY - rect.top) / rect.height);
+    
+    // 新規矩形を描画開始
+    setDrawingRect({ startX: x, startY: y, endX: x, endY: y });
+    setIsDragging(true);
+  };
+
+  const handlePdfMouseMove = (e: MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = clamp01((e.clientX - rect.left) / rect.width);
+    const y = clamp01((e.clientY - rect.top) / rect.height);
+
+    // リサイズ中
+    if (resizingRegion && editingMaterial) {
+      const { index, handle, startX, startY, originalBbox } = resizingRegion;
+      const dx = x - startX;
+      const dy = y - startY;
+      
+      let newBbox = { ...originalBbox };
+      
+      if (handle === "move") {
+        // 移動
+        newBbox.x = clamp01(originalBbox.x + dx);
+        newBbox.y = clamp01(originalBbox.y + dy);
+      } else if (handle === "nw") {
+        // 左上
+        newBbox.x = clamp01(originalBbox.x + dx);
+        newBbox.y = clamp01(originalBbox.y + dy);
+        newBbox.w = clamp01(originalBbox.w - dx);
+        newBbox.h = clamp01(originalBbox.h - dy);
+      } else if (handle === "ne") {
+        // 右上
+        newBbox.y = clamp01(originalBbox.y + dy);
+        newBbox.w = clamp01(originalBbox.w + dx);
+        newBbox.h = clamp01(originalBbox.h - dy);
+      } else if (handle === "sw") {
+        // 左下
+        newBbox.x = clamp01(originalBbox.x + dx);
+        newBbox.w = clamp01(originalBbox.w - dx);
+        newBbox.h = clamp01(originalBbox.h + dy);
+      } else if (handle === "se") {
+        // 右下
+        newBbox.w = clamp01(originalBbox.w + dx);
+        newBbox.h = clamp01(originalBbox.h + dy);
+      }
+      
+      // 最小サイズチェック
+      if (newBbox.w >= 0.01 && newBbox.h >= 0.01) {
+        updateRegion(index, { bbox: newBbox });
+      }
+      return;
+    }
+
+    // 新規描画中
+    if (isDragging && drawingRect) {
+      setDrawingRect({ ...drawingRect, endX: x, endY: y });
+    }
+  };
+
+  const handlePdfMouseUp = () => {
+    // リサイズ終了
+    if (resizingRegion) {
+      setResizingRegion(null);
+      return;
+    }
+
+    // 新規描画終了
+    if (!drawingRect || !editingMaterial) {
+      setIsDragging(false);
+      return;
+    }
+
+    const { startX, startY, endX, endY } = drawingRect;
+    const x = Math.min(startX, endX);
+    const y = Math.min(startY, endY);
+    const w = Math.abs(endX - startX);
+    const h = Math.abs(endY - startY);
+
+    if (w < 0.01 || h < 0.01) {
+      appendLog("領域が小さすぎます");
+      setIsDragging(false);
+      setDrawingRect(null);
+      return;
+    }
+
+    const newRegion: Region = {
+      id: `region_${editingMaterial.regions.length + 1}`,
+      type: "question",
+      bbox: { x, y, w, h },
+      on_point: [],
+      on_help: [],
+    };
+
+    setEditingMaterial({
+      ...editingMaterial,
+      regions: [...editingMaterial.regions, newRegion],
+    });
+    setSelectedRegionIndex(editingMaterial.regions.length);
+    setIsDragging(false);
+    setDrawingRect(null);
+    appendLog(`新しい領域を追加: ${newRegion.id}`);
+  };
+
+  const updateRegion = (index: number, updates: Partial<Region>) => {
+    if (!editingMaterial) return;
+    const updated = [...editingMaterial.regions];
+    updated[index] = { ...updated[index], ...updates };
+    setEditingMaterial({ ...editingMaterial, regions: updated });
+  };
+
+  const deleteRegion = (index: number) => {
+    if (!editingMaterial) return;
+    const updated = editingMaterial.regions.filter((_, i) => i !== index);
+    setEditingMaterial({ ...editingMaterial, regions: updated });
+    if (selectedRegionIndex === index) {
+      setSelectedRegionIndex(null);
+    }
+  };
 
   const selectMaterial = async (materialId: string) => {
     setLoading(true);
@@ -1007,6 +1200,352 @@ export default function App() {
                 </div>
               </div>
             )}
+          </Section>
+
+          <Section
+            title="教材座標編集"
+            icon="🎯"
+            className="grid-col-12"
+            defaultOpen={false}
+          >
+            <div className="material-editor">
+              <div className="material-editor-header">
+                <label>
+                  <span>編集する教材を選択</span>
+                  <select
+                    value={editingMaterialId}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        loadMaterialForEdit(e.target.value);
+                      }
+                    }}
+                  >
+                    <option value="">-- 選択してください --</option>
+                    {materials.map((m) => (
+                      <option key={m.material_id} value={m.material_id}>
+                        {m.material_id} ({m.regions} 領域)
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {editingMaterial && (
+                  <button
+                    type="button"
+                    className="btn-success"
+                    onClick={saveMaterial}
+                  >
+                    💾 保存
+                  </button>
+                )}
+              </div>
+
+              {editingMaterial && (
+                <div className="material-editor-content">
+                  <div className="material-editor-left">
+                    <h3>PDF プレビュー</h3>
+                    <label>
+                      <span>PDF ファイルを選択</span>
+                      <select
+                        value={editingPdf}
+                        onChange={(e) => setEditingPdf(e.target.value)}
+                      >
+                        <option value="">-- PDFを選択 --</option>
+                        {materialAssets.map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    {editingPdf && (
+                      <div
+                        className="material-pdf-container"
+                        onMouseDown={handlePdfMouseDown}
+                        onMouseMove={handlePdfMouseMove}
+                        onMouseUp={handlePdfMouseUp}
+                        onMouseLeave={() => {
+                          setIsDragging(false);
+                          setDrawingRect(null);
+                          setResizingRegion(null);
+                        }}
+                      >
+                        <embed
+                          src={`${API_BASE}/api/materials/assets/${encodeURIComponent(
+                            editingPdf,
+                          )}`}
+                          type="application/pdf"
+                          className="material-pdf-frame"
+                        />
+                        <div className="material-pdf-overlay">
+                          {/* 既存の領域を表示 */}
+                          {editingMaterial.regions.map((region, idx) => (
+                            <div
+                              key={idx}
+                              className={`material-region-box ${
+                                selectedRegionIndex === idx ? "selected" : ""
+                              }`}
+                              style={{
+                                left: `${region.bbox.x * 100}%`,
+                                top: `${region.bbox.y * 100}%`,
+                                width: `${region.bbox.w * 100}%`,
+                                height: `${region.bbox.h * 100}%`,
+                              }}
+                              onMouseDown={(e) => {
+                                e.stopPropagation();
+                                setSelectedRegionIndex(idx);
+                                // 矩形本体をドラッグで移動
+                                const rect = e.currentTarget.parentElement!.getBoundingClientRect();
+                                const x = clamp01((e.clientX - rect.left) / rect.width);
+                                const y = clamp01((e.clientY - rect.top) / rect.height);
+                                setResizingRegion({
+                                  index: idx,
+                                  handle: "move",
+                                  startX: x,
+                                  startY: y,
+                                  originalBbox: { ...region.bbox },
+                                });
+                              }}
+                            >
+                              <span className="material-region-label">
+                                {region.id}
+                              </span>
+                              {/* リサイズハンドル (選択中のみ表示) */}
+                              {selectedRegionIndex === idx && (
+                                <>
+                                  {["nw", "ne", "sw", "se"].map((handle) => (
+                                    <div
+                                      key={handle}
+                                      className={`material-resize-handle handle-${handle}`}
+                                      onMouseDown={(e) => {
+                                        e.stopPropagation();
+                                        const rect = e.currentTarget.parentElement!.parentElement!.getBoundingClientRect();
+                                        const x = clamp01((e.clientX - rect.left) / rect.width);
+                                        const y = clamp01((e.clientY - rect.top) / rect.height);
+                                        setResizingRegion({
+                                          index: idx,
+                                          handle: handle as "nw" | "ne" | "sw" | "se",
+                                          startX: x,
+                                          startY: y,
+                                          originalBbox: { ...region.bbox },
+                                        });
+                                      }}
+                                    />
+                                  ))}
+                                </>
+                              )}
+                            </div>
+                          ))}
+                          {/* ドラッグ中の矩形 */}
+                          {drawingRect && (
+                            <div
+                              className="material-region-box drawing"
+                              style={{
+                                left: `${Math.min(drawingRect.startX, drawingRect.endX) * 100}%`,
+                                top: `${Math.min(drawingRect.startY, drawingRect.endY) * 100}%`,
+                                width: `${Math.abs(drawingRect.endX - drawingRect.startX) * 100}%`,
+                                height: `${Math.abs(drawingRect.endY - drawingRect.startY) * 100}%`,
+                              }}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    <p className="helper-text">
+                      💡 PDF上でドラッグして矩形を追加 | 矩形をドラッグで移動 | 四隅の○をドラッグでリサイズ
+                    </p>
+                  </div>
+
+                  <div className="material-editor-right">
+                    <h3>領域一覧 ({editingMaterial.regions.length})</h3>
+                    <div className="material-regions-list">
+                      {editingMaterial.regions.map((region, idx) => (
+                        <div
+                          key={idx}
+                          className={`material-region-item ${
+                            selectedRegionIndex === idx ? "selected" : ""
+                          }`}
+                          onClick={() => setSelectedRegionIndex(idx)}
+                        >
+                          <div className="material-region-header">
+                            <strong>{region.id}</strong>
+                            <button
+                              type="button"
+                              className="btn-danger btn-sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (
+                                  confirm(`領域 ${region.id} を削除しますか？`)
+                                ) {
+                                  deleteRegion(idx);
+                                }
+                              }}
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                          {selectedRegionIndex === idx && (
+                            <div className="material-region-form">
+                              <label>
+                                <span>ID</span>
+                                <input
+                                  type="text"
+                                  value={region.id}
+                                  onChange={(e) =>
+                                    updateRegion(idx, { id: e.target.value })
+                                  }
+                                />
+                              </label>
+                              <label>
+                                <span>タイプ</span>
+                                <select
+                                  value={region.type}
+                                  onChange={(e) =>
+                                    updateRegion(idx, { type: e.target.value })
+                                  }
+                                >
+                                  <option value="question">question</option>
+                                  <option value="line">line</option>
+                                  <option value="word">word</option>
+                                  <option value="diagram">diagram</option>
+                                </select>
+                              </label>
+                              <label>
+                                <span>ラベル (任意)</span>
+                                <input
+                                  type="text"
+                                  value={region.label || ""}
+                                  onChange={(e) =>
+                                    updateRegion(idx, { label: e.target.value })
+                                  }
+                                />
+                              </label>
+                              <div className="bbox-grid">
+                                <label>
+                                  <span>x</span>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    max="1"
+                                    value={region.bbox.x}
+                                    onChange={(e) =>
+                                      updateRegion(idx, {
+                                        bbox: {
+                                          ...region.bbox,
+                                          x: Number(e.target.value),
+                                        },
+                                      })
+                                    }
+                                  />
+                                </label>
+                                <label>
+                                  <span>y</span>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    max="1"
+                                    value={region.bbox.y}
+                                    onChange={(e) =>
+                                      updateRegion(idx, {
+                                        bbox: {
+                                          ...region.bbox,
+                                          y: Number(e.target.value),
+                                        },
+                                      })
+                                    }
+                                  />
+                                </label>
+                                <label>
+                                  <span>w</span>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    max="1"
+                                    value={region.bbox.w}
+                                    onChange={(e) =>
+                                      updateRegion(idx, {
+                                        bbox: {
+                                          ...region.bbox,
+                                          w: Number(e.target.value),
+                                        },
+                                      })
+                                    }
+                                  />
+                                </label>
+                                <label>
+                                  <span>h</span>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    max="1"
+                                    value={region.bbox.h}
+                                    onChange={(e) =>
+                                      updateRegion(idx, {
+                                        bbox: {
+                                          ...region.bbox,
+                                          h: Number(e.target.value),
+                                        },
+                                      })
+                                    }
+                                  />
+                                </label>
+                              </div>
+                              <label>
+                                <span>on_point (カンマ区切り)</span>
+                                <input
+                                  type="text"
+                                  value={region.on_point.join(", ")}
+                                  onChange={(e) =>
+                                    updateRegion(idx, {
+                                      on_point: e.target.value
+                                        .split(",")
+                                        .map((s) => s.trim())
+                                        .filter((s) => s),
+                                    })
+                                  }
+                                  placeholder="例: Q1_INTRO, SAY_HELLO"
+                                />
+                              </label>
+                              <label>
+                                <span>on_help (カンマ区切り)</span>
+                                <input
+                                  type="text"
+                                  value={region.on_help.join(", ")}
+                                  onChange={(e) =>
+                                    updateRegion(idx, {
+                                      on_help: e.target.value
+                                        .split(",")
+                                        .map((s) => s.trim())
+                                        .filter((s) => s),
+                                    })
+                                  }
+                                  placeholder="例: Q1_HINT"
+                                />
+                              </label>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    {editingMaterial.regions.length === 0 && (
+                      <p className="helper-text">
+                        領域がありません。PDF上でドラッグして追加してください。
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {!editingMaterial && (
+                <p className="helper-text">
+                  教材を選択してください。
+                </p>
+              )}
+            </div>
           </Section>
 
           <Section

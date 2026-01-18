@@ -15,7 +15,7 @@ import yaml
 from .config import Settings, load_settings
 from .logger import get_logger
 from .mapping import MaterialRepository
-from .materials import Region, load_materials
+from .materials import Material, Region, load_materials
 from .scripts import load_scripts
 from .services.arm import ArmCommand, ArmService
 from .services.deepseek import DeepSeekService
@@ -176,6 +176,56 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Asset not found")
         return FileResponse(path, media_type="application/pdf")
 
+    @app.get("/api/materials/{material_id}")
+    async def get_material(material_id: str) -> dict:
+        """Get material definition JSON."""
+        materials_dict = ctx.repository.list_materials()
+        material = materials_dict.get(material_id)
+        if not material:
+            raise HTTPException(
+                status_code=404, detail="Material not found"
+            )
+        return material.dict()
+
+    @app.put("/api/materials/{material_id}")
+    async def update_material(
+        material_id: str, material_data: Material
+    ) -> dict:
+        """Update material definition JSON."""
+        if material_id != material_data.material_id:
+            raise HTTPException(
+                status_code=400,
+                detail="material_id mismatch"
+            )
+        
+        # Validate the material data
+        try:
+            validated = Material(**material_data.dict())
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid material data: {str(e)}"
+            )
+        
+        # Save to file
+        json_path = settings.materials_dir / f"material_{material_id}.json"
+        try:
+            with json_path.open("w", encoding="utf-8") as f:
+                json.dump(validated.dict(), f, ensure_ascii=False, indent=2)
+            logger.info(f"Updated material: {material_id}")
+        except Exception as e:
+            logger.error(f"Failed to save material {material_id}: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to save material: {str(e)}"
+            )
+        
+        # Reload materials
+        new_materials = load_materials(settings.materials_dir)
+        ctx.repository._materials = new_materials
+        
+        return {"status": "success", "material_id": material_id}
+
     @app.post("/api/materials/select")
     async def select_material(payload: MaterialSelectionPayload) -> dict:
         try:
@@ -250,8 +300,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             current_region=current_region,
             state="IDLE" if not current_region else "TARGET_SELECTED",
         )
-        logger.info("Dialogue response: %s (source: %s, action: %s)", 
-                   dialogue_resp.text, dialogue_resp.source, dialogue_resp.router_action)
+        logger.info(
+            "Dialogue response: %s (source: %s, action: %s)",
+            dialogue_resp.text,
+            dialogue_resp.source,
+            dialogue_resp.router_action,
+        )
         audio = None
         if dialogue_resp.text:
             audio = await ctx.tts.synthesize(dialogue_resp.text)
