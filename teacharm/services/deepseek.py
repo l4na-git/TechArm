@@ -29,6 +29,11 @@ class GenerationRequest:
     script_on_point: Optional[str] = None
     max_sentences: int = 2
     audience: str = "小学3年生"
+    # 座標とコンテキスト強化
+    pointer_coords: Optional[Dict[str, float]] = None  # {"x": 0.59, "y": 0.05}
+    region_bbox: Optional[Dict[str, float]] = None  # 領域範囲
+    pdf_full_text: Optional[str] = None  # PDF全文
+    user_speech: Optional[str] = None  # ユーザー発話テキスト
 
 
 @dataclass
@@ -56,10 +61,21 @@ class DeepSeekService:
         region: Region,
         material_id: str,
         style: str = "hint",
+        pointer_coords: Optional[Dict[str, float]] = None,
+        pdf_full_text: Optional[str] = None,
+        user_speech: Optional[str] = None,
     ) -> GenerationResponse:
         """
         Generate a short explanation or hint for a region.
         Returns 1-2 sentences suitable for elementary students.
+        
+        Args:
+            region: 指定された領域情報
+            material_id: 教材ID
+            style: 生成スタイル ("hint" or "explain")
+            pointer_coords: ポインター座標 {"x": 0.5, "y": 0.3}
+            pdf_full_text: PDF全文テキスト（コンテキスト強化用）
+            user_speech: ユーザー音声認識テキスト
         """
         import time
 
@@ -72,9 +88,13 @@ class DeepSeekService:
             region_id=region.id,
             region_label=region.label or region.id,
             region_type=region.type,
-            region_text=getattr(region, "text", None),
+            region_text=region.extracted_text or getattr(region, "text", None),
             script_on_help=self._get_script_text(region, "on_help"),
             script_on_point=self._get_script_text(region, "on_point"),
+            pointer_coords=pointer_coords,
+            region_bbox=region.bbox.dict() if region.bbox else None,
+            pdf_full_text=pdf_full_text,
+            user_speech=user_speech,
         )
 
         try:
@@ -124,7 +144,7 @@ class DeepSeekService:
 
     def _build_system_prompt(self, request: GenerationRequest) -> str:
         """Build system prompt for DeepSeek."""
-        return f"""あなたは小学生向けの学習支援AIです。
+        base_prompt = f"""あなたは小学生向けの学習支援AIです。
 
 役割:
 - 教材内容について、{request.audience}にわかりやすく説明する
@@ -140,6 +160,18 @@ class DeepSeekService:
 スタイル: {request.style}
 - hint: ヒントや手がかりを示す（答えは言わない）
 - explain: 言い換えや別の表現で説明する"""
+        
+        # PDF全文がある場合はコンテキストとして追加
+        if request.pdf_full_text:
+            context_section = f"""
+
+【教材全文】
+以下は教材PDF全体の内容です。回答の際の背景情報として参照してください。
+
+{request.pdf_full_text[:3000]}"""  # 最大3000文字まで
+            base_prompt += context_section
+        
+        return base_prompt
 
     def _build_user_message(self, request: GenerationRequest) -> str:
         """Build user message for DeepSeek."""
@@ -147,19 +179,40 @@ class DeepSeekService:
             f"教材ID: {request.material_id}",
             f"対象: {request.region_label} ({request.region_type})",
         ]
-
-        if request.region_text:
-            parts.append(f"内容: {request.region_text}")
-
-        if request.script_on_point:
-            parts.append(f"既存の説明: {request.script_on_point}")
-
-        if request.style == "hint":
+        
+        # ポインター座標情報
+        if request.pointer_coords:
+            x = request.pointer_coords.get("x", 0)
+            y = request.pointer_coords.get("y", 0)
+            parts.append(f"ポインター座標: (x={x:.3f}, y={y:.3f})")
+        
+        # 領域範囲情報（type情報を強調）
+        if request.region_bbox:
+            bbox = request.region_bbox
             parts.append(
-                "この問題について、考え方のヒントを1〜2文で教えてください。"
+                f"領域範囲: x={bbox['x']:.3f}〜{bbox['x']+bbox['w']:.3f}, "
+                f"y={bbox['y']:.3f}〜{bbox['y']+bbox['h']:.3f}"
+            )
+            parts.append(f"領域タイプ: {request.region_type}")
+
+        # PDFから抽出したテキスト
+        if request.region_text:
+            parts.append(f"\n【この領域の内容】\n{request.region_text}")
+
+        # 既存スクリプト（参考情報）
+        if request.script_on_point:
+            parts.append(f"\n【参考: 既存の説明】\n{request.script_on_point}")
+        
+        # ユーザー発話
+        if request.user_speech:
+            parts.append(f"\n【ユーザーの質問】\n{request.user_speech}")
+            parts.append("\n上記の質問に対して、教材内容を踏まえて1〜2文で答えてください。")
+        elif request.style == "hint":
+            parts.append(
+                "\nこの問題について、考え方のヒントを1〜2文で教えてください。"
             )
         else:
-            parts.append("この内容を別の言い方で説明してください。")
+            parts.append("\nこの内容を別の言い方で説明してください。")
 
         return "\n".join(parts)
 
