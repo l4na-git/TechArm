@@ -7,6 +7,7 @@ import {
   type MouseEvent,
 } from "react";
 import { dump as dumpYAML, load as loadYAML } from "js-yaml";
+import { VisionPanel } from "./VisionPanel";
 
 type MaterialSummary = {
   material_id: string;
@@ -785,6 +786,10 @@ export default function App() {
 
       <main>
         <div className="dashboard-grid">
+          <Section title="Vision System" icon="📷" className="grid-col-12">
+            <VisionPanel apiUrl={API_BASE} />
+          </Section>
+
           <Section title="教材選択" icon="📚" className="grid-col-6">
             <div className="materials">
               {materials.length === 0 && (

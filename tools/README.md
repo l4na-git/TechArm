@@ -1,10 +1,38 @@
-# 座標変換ツール (tools/)
+# ツール集 (tools/)
 
-教材の座標をピクセル値から正規化座標（0.0~1.0）に変換するツール群です。
+TeachArmの開発・セットアップに使用するユーティリティツールです。
 
-## 使い方
+## ツール一覧
 
-### 1. 単一座標の変換
+### 1. ArUcoマーカー生成 (generate_aruco_markers.py)
+
+Vision機能のキャリブレーション用ArUcoマーカーを生成します。
+
+**使用方法:**
+```bash
+# デフォルト設定で生成
+python tools/generate_aruco_markers.py
+
+# カスタム設定
+python tools/generate_aruco_markers.py \
+  --output my_markers \
+  --size 300 \
+  --dict DICT_4X4_50
+```
+
+**出力:**
+- `aruco_marker_0_top-left.png`
+- `aruco_marker_1_top-right.png`
+- `aruco_marker_2_bottom-right.png`
+- `aruco_marker_3_bottom-left.png`
+
+印刷して教材の四隅に配置してください。
+
+### 2. 座標変換ツール (convert_coordinates.py)
+
+教材の座標をピクセル値から正規化座標（0.0~1.0）に変換します。
+
+#### 単一座標の変換
 
 ```bash
 python tools/convert_coordinates.py \
@@ -151,9 +179,21 @@ cat tools/example_pixel_coordinates.json | \
 
 6. **サーバー再起動して確認**
    ```bash
-   uv run -m teacharm.main
+   uv run python -m teacharm.main
    # ログで "Loaded material 'MyMaterial'" を確認
    ```
+
+### 3. PDF抽出ツール (extract_pdf_text.py)
+
+教材PDFから領域ごとにテキストを抽出します。
+
+**使用方法:**
+```bash
+python tools/extract_pdf_text.py materials/material_A.json
+# 出力: materials/A_text.json
+```
+
+詳細は [PDF抽出とDeepSeek統合ガイド](../docs/PDF抽出とDeepSeek統合ガイド.md) を参照。
 
 ## トラブルシューティング
 

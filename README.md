@@ -8,11 +8,16 @@
   - `services/router.py` – ルールベースルーティングサービス
   - `services/deepseek.py` – DeepSeek による文章生成専用サービス（必要時のみ呼び出し）
   - `services/dialogue.py` – Router → 台本 → DeepSeek の順で処理する対話オーケストレーション
-- `config/` – Arm 安全領域や VOICEVOX パラメータ、9 点キャリブレーションなどの JSON/YAML。
+  - `services/vision.py` – カメラ入力、ArUco検出、MediaPipe Handsによる手検出
+  - `services/arm.py` – SO-101 ロボットアーム制御
+  - `services/tts.py` – VOICEVOX 音声合成
+- `config/` – Arm 安全領域や VOICEVOX パラメータ、9 点キャリブレーション、カメラ設定などの JSON/YAML。
 - `materials/` – 教材 A/B の領域定義ファイル。
 - `scripts/common.yaml` – 先生ロール・台本コマンド・ネガティブルール・エラー復帰メッセージ。
 - `.env.example` – 環境変数テンプレート（Tailscale IP、DeepSeek/VOICEVOX URL 等）。
 - `control-panel/` – React + Vite 製のコントロールパネル UI。
+- `docs/` – 各機能の詳細ドキュメント。
+- `tools/` – ArUcoマーカー生成、座標変換、PDF抽出などのユーティリティ。
 
 ## 対話システムのアーキテクチャ
 
@@ -58,6 +63,39 @@ python -m teacharm.main
 - `POST /api/arm/move` – アーム移動
 - `POST /api/arm/safe_pose` – アームをセーフポーズに戻す
 - `GET /api/state` – 現在の状態取得
+- `POST /api/vision/start` – カメラ起動
+- `POST /api/vision/stop` – カメラ停止
+- `POST /api/vision/calibrate` – ArUcoキャリブレーション実行
+- `WebSocket /ws/vision` – リアルタイムビジョンフレーム配信（10fps）
+
+## Vision機能のセットアップ
+
+TeachArmはカメラを使用してArUcoマーカー検出と手・指先追跡を行います。
+
+### クイックスタート
+
+```bash
+# 1. ArUcoマーカーを生成
+python tools/generate_aruco_markers.py
+
+# 2. 生成されたマーカーを印刷し、教材の四隅に配置
+
+# 3. カメラアクセス許可 (macOS)
+# システム環境設定 > セキュリティとプライバシー > カメラ
+
+# 4. インタラクティブデモ（プレビュー付き）
+uv run python demo_vision.py
+# または基本テスト
+uv run python test_vision.py
+```
+
+デモ画面では:
+- リアルタイムでカメラ映像を確認
+- 手・指先の検出結果を可視化（緑の円と十字）
+- ArUcoマーカーの検出状況を表示
+- `c`キーでキャリブレーション、`q`キーで終了
+
+詳細は [Visionクイックスタート](docs/Visionクイックスタート.md) または [Vision機能ガイド](docs/Vision機能ガイド.md) を参照。
 
 ### 設定チェックリスト
 
@@ -71,8 +109,16 @@ python -m teacharm.main
 - `config/arm_calibration.json`：9 点 (u,v)→(x,y,z) を入力。
 - `materials/material_*.json`：教材領域（question/line）を実データで記入。
 - `config/voicevox_params.yaml`：VOICEVOX の話速/抑揚などを調整（必要に応じて）。
+- `config/camera.yaml`：カメラ解像度、MediaPipe設定などを調整（デフォルトで動作）。
 
-現時点では Vision/Arm 実装にスタブを含んでおり、ログ出力で動作を確認できます。実機が揃い次第、該当サービスを差し替えてください。
+### 実装状況
+
+- ✅ **Dialogue/Router/DeepSeek**: 完全実装済み
+- ✅ **Vision (Camera + MediaPipe Hands)**: 完全実装済み
+- ✅ **TTS (VOICEVOX)**: スタブ実装（外部サーバー接続対応）
+- ⚠️ **Arm (SO-101)**: スタブ実装（実機接続は未実装）
+
+実機（カメラ、SO-101アーム）が揃い次第、該当サービスを有効化できます。
 
 ## Control Panel（React UI）
 

@@ -1,0 +1,61 @@
+# Camera configuration for TeachArm Vision system
+
+# Camera device settings
+device:
+  # Camera device path (0 for default camera, or /dev/video0 for specific device)
+  index: 0
+  # Alternative: use device path on Linux
+  # path: "/dev/video0"
+
+# Resolution settings
+resolution:
+  width: 1280
+  height: 720
+
+# Camera parameters (OpenCV VideoCapture properties)
+parameters:
+  # FPS setting
+  fps: 30
+  # Auto focus (0 = disabled, 1 = enabled)
+  autofocus: 0
+  # Auto exposure (1 = manual, 3 = auto)
+  auto_exposure: 1
+  # Exposure value (when auto_exposure = 1)
+  exposure: 100
+  # Auto white balance (0 = disabled, 1 = enabled)
+  auto_white_balance: 1
+
+# ArUco marker detection settings
+aruco:
+  # ArUco dictionary type
+  dictionary: "DICT_4X4_50"
+  # Expected marker IDs (4 corners)
+  marker_ids: [0, 1, 2, 3]
+  # Marker size in meters (for pose estimation, if needed)
+  marker_size: 0.05
+
+# Hand detection settings
+hand_detection:
+  # Detection method: "mediapipe" (recommended) or "color" (fallback)
+  method: "mediapipe"
+  # Confidence threshold for MediaPipe detection (0.0-1.0)
+  # Lower = more sensitive but may have false positives
+  confidence_threshold: 0.4
+  # MediaPipe model complexity: 0 (lite) or 1 (full)
+  # 0 is faster and suitable for most cases
+  model_complexity: 0
+  # Moving average window size for fingertip smoothing
+  # Lower = more responsive, higher = smoother
+  smoothing_window: 3
+  # Maximum jump distance in pixels to reject outliers
+  # Set to ~15% of frame width for 1280x720 (200px)
+  max_jump_threshold: 200
+
+# Debug settings
+debug:
+  # Enable debug visualization
+  show_preview: false
+  # Save debug frames to disk
+  save_frames: false
+  # Debug output directory
+  debug_dir: "debug/vision"

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, validator
@@ -22,6 +23,7 @@ from .services.deepseek import DeepSeekService
 from .services.dialogue import DialogueService
 from .services.router import RouterService
 from .services.tts import VoiceVoxService
+from .services.vision import VisionService
 from .state import AppState
 
 logger = get_logger(__name__)
@@ -94,6 +96,7 @@ class TeachArmContext:
         self.tts = VoiceVoxService(settings)
         arm_limits = self._load_json(settings.config_dir / "arm_limits.json")
         self.arm = ArmService(arm_limits)
+        self.vision = VisionService(settings)
         self.calibration_path = settings.config_dir / "arm_calibration.json"
         self.calibration = self._load_json(self.calibration_path)
 
@@ -384,5 +387,84 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             encoding="utf-8",
         )
         return {"status": "updated"}
+
+    @app.post("/api/vision/start")
+    async def start_vision() -> dict:
+        """Start camera capture."""
+        success = ctx.vision.start()
+        if not success:
+            raise HTTPException(
+                status_code=500, detail="Failed to start camera"
+            )
+        return {"status": "started"}
+
+    @app.post("/api/vision/stop")
+    async def stop_vision() -> dict:
+        """Stop camera capture."""
+        ctx.vision.stop()
+        return {"status": "stopped"}
+
+    @app.post("/api/vision/calibrate")
+    async def calibrate_vision() -> dict:
+        """Trigger ArUco calibration."""
+        frame = ctx.vision.capture_frame()
+        if frame is None:
+            raise HTTPException(
+                status_code=400, detail="Camera not started"
+            )
+        
+        marker_ids, marker_corners = ctx.vision.detect_aruco_markers(frame)
+        success = ctx.vision.calibrate_perspective(marker_corners)
+        
+        if not success:
+            raise HTTPException(
+                status_code=400,
+                detail="Calibration failed. Ensure all 4 markers are visible.",
+            )
+        
+        return {
+            "status": "calibrated",
+            "markers_detected": marker_ids,
+        }
+
+    @app.websocket("/ws/vision")
+    async def websocket_vision(websocket: WebSocket) -> None:
+        """
+        WebSocket endpoint for streaming vision frames with video.
+        
+        Sends VisionFrame JSON with base64-encoded image at ~10fps.
+        """
+        await websocket.accept()
+        logger.info("Vision WebSocket client connected")
+        
+        try:
+            while True:
+                vision_frame = ctx.vision.process_frame()
+                if vision_frame is not None:
+                    # Get current frame for preview
+                    import base64
+                    import cv2
+                    
+                    preview_frame = ctx.vision.get_preview_frame()
+                    
+                    # Encode frame to JPEG
+                    if preview_frame is not None:
+                        _, buffer = cv2.imencode('.jpg', preview_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                        frame_base64 = base64.b64encode(buffer).decode('utf-8')
+                    else:
+                        frame_base64 = None
+                    
+                    # Send frame data with image
+                    data = vision_frame.dict()
+                    data['image'] = frame_base64
+                    await websocket.send_json(data)
+                
+                # Send at ~10fps
+                await asyncio.sleep(0.1)
+        
+        except WebSocketDisconnect:
+            logger.info("Vision WebSocket client disconnected")
+        except Exception as e:
+            logger.error("Vision WebSocket error: %s", e)
 
     return app

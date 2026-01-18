@@ -1,10 +1,17 @@
 fastapi==0.110.0
 uvicorn==0.27.1
+websockets==12.0
 httpx==0.26.0
 pydantic==1.10.14
 PyYAML==6.0.1
 python-dotenv==1.0.1
 types-PyYAML==6.0.12.12
+
+# Vision / Camera dependencies
+opencv-python==4.9.0.80
+opencv-contrib-python==4.9.0.80
+numpy==1.26.4
+mediapipe==0.10.9
 
 # SO-101 arm control (optional - install when using real hardware)
 # Uncomment the line below when ready to connect to SO-101:
