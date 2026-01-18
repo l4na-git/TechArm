@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 try:
     import pymupdf  # PyMuPDF
@@ -55,7 +55,9 @@ def extract_text_from_pdf(
                 # テキスト取得（縦書き対応: 改行除去）
                 lines = []
                 for line in block["lines"]:
-                    line_text = "".join([span["text"] for span in line["spans"]])
+                    line_text = "".join(
+                        [span["text"] for span in line["spans"]]
+                    )
                     lines.append(line_text)
                 
                 # 改行を除去して連結
@@ -114,8 +116,10 @@ def extract_region_text(
         block_center_x = bbox["x"] + bbox["w"] / 2
         block_center_y = bbox["y"] + bbox["h"] / 2
         
-        if (region_x <= block_center_x <= region_x + region_w and
-            region_y <= block_center_y <= region_y + region_h):
+        if (
+            region_x <= block_center_x <= region_x + region_w
+            and region_y <= block_center_y <= region_y + region_h
+        ):
             matched_blocks.append(block)
     
     # Y座標順にソート（上から下）
@@ -147,7 +151,10 @@ def main():
     parser.add_argument(
         "--output",
         type=Path,
-        help="Output JSON file (default: {material_id}_text.json in materials dir)"
+        help=(
+            "Output JSON file "
+            "(default: {material_id}_text.json in materials dir)"
+        ),
     )
     
     args = parser.parse_args()

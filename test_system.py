@@ -17,8 +17,7 @@ print("=" * 60)
 # Test 1: Import core modules
 print("\n[Test 1] Importing core modules...")
 try:
-    from teacharm.config import Settings, load_settings
-    from teacharm.logger import get_logger
+    from teacharm.config import load_settings
     from teacharm.materials import load_materials
     from teacharm.scripts import load_scripts
     print("✓ Core modules imported successfully")
@@ -32,8 +31,6 @@ try:
     from teacharm.services.router import RouterService
     from teacharm.services.deepseek import DeepSeekService
     from teacharm.services.dialogue import DialogueService
-    from teacharm.services.tts import VoiceVoxService
-    from teacharm.services.arm import ArmService
     print("✓ Service modules imported successfully")
 except Exception as e:
     print(f"✗ Failed to import service modules: {e}")

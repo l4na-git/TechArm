@@ -84,7 +84,9 @@ class RouterService:
             ]
             if any(keyword in text_lower for keyword in out_of_scope_keywords):
                 self._reject_count += 1
-                logger.info("Rejected out-of-scope request: %s", router_input.asr_text)
+                logger.info(
+                    "Rejected out-of-scope request: %s", router_input.asr_text
+                )
                 return RouterOutput(
                     action="reject",
                     args={"reason": "out_of_scope"},
@@ -108,7 +110,10 @@ class RouterService:
                 if router_input.current_region_id:
                     return RouterOutput(
                         action="respond_script",
-                        args={"mode": "help", "region_id": router_input.current_region_id},
+                        args={
+                            "mode": "help",
+                            "region_id": router_input.current_region_id,
+                        },
                         raw_response="rule_based",
                         fallback_used=False,
                     )
