@@ -30,6 +30,17 @@ negative_rules:
     when: 学習内容と関係ない
     action:
       - SAY_OUT_OF_SCOPE
+error_recovery:
+  E_CAM:
+    - SAY: カメラが見えないみたい。接続を確認してね。
+  E_MARKER:
+    - SAY: マーカーが見えないよ。4つ全部が映るようにしてね。
+  E_HAND:
+    - SAY: 手が見えないよ。カメラの前に手を出してみて。
+  E_ARM:
+    - SAY: アームが動かないみたい。接続を確認してね。
+  E_INTERNAL:
+    - SAY: ちょっと調子が悪いみたい。もう一度やってみて。
 commands:
   Q_INTRO:
     - SAY: ここはこの問題だよ。まず文章を一緒に読もう。

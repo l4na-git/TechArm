@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, validator
 import yaml
 
@@ -17,7 +18,9 @@ from .mapping import MaterialRepository
 from .materials import Region, load_materials
 from .scripts import load_scripts
 from .services.arm import ArmCommand, ArmService
+from .services.deepseek import DeepSeekService
 from .services.dialogue import DialogueService
+from .services.router import RouterService
 from .services.tts import VoiceVoxService
 from .state import AppState
 
@@ -55,6 +58,20 @@ class ScriptUpdatePayload(BaseModel):
     content: str
 
 
+class CalibrationPointPayload(BaseModel):
+    id: str
+    u: Optional[float] = None
+    v: Optional[float] = None
+    x: Optional[float] = None
+    y: Optional[float] = None
+    z: Optional[float] = None
+
+
+class CalibrationPayload(BaseModel):
+    version: int = 1
+    points: List[CalibrationPointPayload]
+
+
 class TeachArmContext:
     """Composition root for the API application."""
 
@@ -67,17 +84,24 @@ class TeachArmContext:
             raise RuntimeError("No material definitions found.")
         self.repository = MaterialRepository(materials)
         self.state = AppState(active_material=self.repository.current_id)
-        self.dialogue = DialogueService(settings, self.scripts)
+        
+        # Initialize services
+        self.router = RouterService(settings)
+        self.deepseek = DeepSeekService(settings)
+        self.dialogue = DialogueService(
+            settings, self.scripts, self.router, self.deepseek
+        )
         self.tts = VoiceVoxService(settings)
         arm_limits = self._load_json(settings.config_dir / "arm_limits.json")
         self.arm = ArmService(arm_limits)
-        self.calibration = self._load_json(
-            settings.config_dir / "arm_calibration.json"
-        )
+        self.calibration_path = settings.config_dir / "arm_calibration.json"
+        self.calibration = self._load_json(self.calibration_path)
 
     def reload_scripts(self) -> None:
         self.scripts = load_scripts(self.scripts_path)
-        self.dialogue = DialogueService(self.settings, self.scripts)
+        self.dialogue = DialogueService(
+            self.settings, self.scripts, self.router, self.deepseek
+        )
 
     def _load_json(self, path: Path) -> dict:
         if not path.exists():
@@ -110,6 +134,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "control_panel_url": settings.control_panel_url,
         }
 
+    @app.get("/api/stats")
+    async def get_stats() -> dict:
+        """Get statistics for monitoring (Router and DeepSeek)."""
+        return {
+            "router": ctx.router.get_stats(),
+            "deepseek": ctx.deepseek.get_stats(),
+        }
+
     @app.get("/api/materials")
     async def list_materials() -> dict:
         return {
@@ -122,6 +154,27 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 for mat in ctx.repository.list_materials().values()
             ]
         }
+
+    @app.get("/api/materials/assets")
+    async def list_material_assets() -> dict:
+        assets = []
+        if settings.materials_dir.exists():
+            assets = [
+                path.name
+                for path in settings.materials_dir.iterdir()
+                if path.is_file() and path.suffix.lower() == ".pdf"
+            ]
+        assets.sort()
+        return {"files": assets}
+
+    @app.get("/api/materials/assets/{filename}")
+    async def get_material_asset(filename: str) -> FileResponse:
+        if "/" in filename or "\\" in filename:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        path = settings.materials_dir / filename
+        if not path.exists() or path.suffix.lower() != ".pdf":
+            raise HTTPException(status_code=404, detail="Asset not found")
+        return FileResponse(path, media_type="application/pdf")
 
     @app.post("/api/materials/select")
     async def select_material(payload: MaterialSelectionPayload) -> dict:
@@ -139,7 +192,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if not region:
             return {"region": None, "dialogue": None}
         ctx.state.last_region = region.id
-        dialogue = await ctx.dialogue.on_region_event(region, event)
+        dialogue = await ctx.dialogue.on_region_event(
+            region=region,
+            event=event,
+            material_id=ctx.state.active_material or "",
+            state="TARGET_SELECTED",
+            error_code=None,
+        )
         audio = None
         if dialogue.text:
             audio = await ctx.tts.synthesize(dialogue.text)
@@ -151,6 +210,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "text": dialogue.text,
                 "source": dialogue.source,
                 "commands": dialogue.commands,
+                "router_action": dialogue.router_action,
+                "router_fallback": dialogue.router_fallback,
+                "deepseek_time_ms": dialogue.deepseek_time_ms,
             },
             "audio_path": str(audio) if audio else None,
         }
@@ -170,7 +232,23 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.post("/api/dialogue")
     async def dialogue(payload: DialoguePayload) -> dict:
-        dialogue_resp = await ctx.dialogue.on_text(payload.text)
+        current_material = ctx.repository.current
+        if not current_material:
+            raise HTTPException(
+                status_code=400, detail="No material selected"
+            )
+        current_region = None
+        if ctx.state.last_region:
+            current_region = current_material.get_region(
+                ctx.state.last_region
+            )
+        
+        dialogue_resp = await ctx.dialogue.on_text(
+            user_text=payload.text,
+            material_id=ctx.state.active_material,
+            current_region=current_region,
+            state="IDLE" if not current_region else "TARGET_SELECTED",
+        )
         audio = None
         if dialogue_resp.text:
             audio = await ctx.tts.synthesize(dialogue_resp.text)
@@ -179,6 +257,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "text": dialogue_resp.text,
                 "source": dialogue_resp.source,
                 "commands": dialogue_resp.commands,
+                "router_action": dialogue_resp.router_action,
+                "router_fallback": dialogue_resp.router_fallback,
+                "deepseek_time_ms": dialogue_resp.deepseek_time_ms,
             },
             "audio_path": str(audio) if audio else None,
         }
@@ -227,6 +308,24 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             )
         ctx.scripts_path.write_text(payload.content, encoding="utf-8")
         ctx.reload_scripts()
+        return {"status": "updated"}
+
+    @app.get("/api/calibration")
+    async def get_calibration() -> dict:
+        if not ctx.calibration:
+            ctx.calibration = ctx._load_json(ctx.calibration_path)
+        if "points" not in ctx.calibration:
+            return {"version": 1, "points": []}
+        return ctx.calibration
+
+    @app.post("/api/calibration")
+    async def update_calibration(payload: CalibrationPayload) -> dict:
+        data = payload.dict()
+        ctx.calibration = data
+        ctx.calibration_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
         return {"status": "updated"}
 
     return app

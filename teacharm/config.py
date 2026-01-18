@@ -16,10 +16,27 @@ class Settings(BaseSettings):
     scripts_dir: Path = Field(default=Path("scripts"))
     config_dir: Path = Field(default=Path("config"))
 
+    # Ollama (deprecated - kept for backward compatibility)
     ollama_base_url: str = Field(
         default="http://127.0.0.1:11434", env="OLLAMA_BASE_URL"
     )
     ollama_model: str = Field(default="teacharm-llm", env="OLLAMA_MODEL")
+
+    # FunctionGemma (Routing - ローカル推論)
+    function_gemma_base_url: str = Field(
+        default="http://127.0.0.1:11434", env="FUNCTION_GEMMA_BASE_URL"
+    )
+    function_gemma_model: str = Field(
+        default="gemma2:2b", env="FUNCTION_GEMMA_MODEL"
+    )
+
+    # DeepSeek (Text Generation - 自宅サーバー、Tailscale経由)
+    deepseek_base_url: str = Field(
+        default="http://127.0.0.1:11434", env="DEEPSEEK_BASE_URL"
+    )
+    deepseek_model: str = Field(
+        default="deepseek-r1:7b", env="DEEPSEEK_MODEL"
+    )
 
     voicevox_base_url: str = Field(
         default="http://127.0.0.1:50021", env="VOICEVOX_BASE_URL"

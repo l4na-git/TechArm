@@ -36,6 +36,7 @@ class Region(BaseModel):
 
     id: str
     type: str
+    label: Optional[str] = None
     bbox: BoundingBox
     on_point: List[str] = []
     on_help: List[str] = []
@@ -52,6 +53,13 @@ class Material(BaseModel):
             region for region in self.regions
             if region.bbox.contains(u, v)
         ]
+
+    def get_region(self, region_id: str) -> Optional[Region]:
+        """Get a region by its ID."""
+        for region in self.regions:
+            if region.id == region_id:
+                return region
+        return None
 
 
 PRIORITY = {"question": 0, "line": 1, "word": 2}

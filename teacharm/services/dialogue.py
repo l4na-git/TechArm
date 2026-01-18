@@ -1,18 +1,17 @@
-"""Dialogue orchestration built on top of scripts and Ollama."""
+"""Dialogue orchestration with Router (FunctionGemma) and DeepSeek."""
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
-from typing import Dict, List
-
-import httpx
+from typing import Any, Dict, List, Optional
 
 from ..config import Settings
 from ..logger import get_logger
 from ..materials import Region
 from ..scripts import ScriptSet
+from .deepseek import DeepSeekService
+from .router import RouterInput, RouterService
 
 logger = get_logger(__name__)
 
@@ -21,91 +20,271 @@ logger = get_logger(__name__)
 class DialogueResponse:
     text: str
     commands: List[Dict]
-    source: str  # "script" | "command" | "llm"
+    source: str  # "script" | "router" | "deepseek" | "error_recovery"
+    router_action: Optional[str] = None
+    router_fallback: bool = False
+    deepseek_time_ms: int = 0
 
 
 class DialogueService:
-    """Map events to dialogue responses."""
+    """Orchestrate dialogue using Router → Script → DeepSeek flow."""
 
-    def __init__(self, settings: Settings, scripts: ScriptSet):
+    def __init__(
+        self,
+        settings: Settings,
+        scripts: ScriptSet,
+        router: RouterService,
+        deepseek: DeepSeekService,
+    ):
         self._settings = settings
         self._scripts = scripts
+        self._router = router
+        self._deepseek = deepseek
+        self._last_response: Optional[DialogueResponse] = None
+        self._last_region_id: Optional[str] = None
 
     async def on_region_event(
-        self, region: Region, event: str
+        self,
+        region: Region,
+        event: str,
+        material_id: str,
+        state: str = "TARGET_SELECTED",
+        error_code: Optional[str] = None,
     ) -> DialogueResponse:
-        command_names = getattr(region, event, [])
-        if not command_names:
-            return await self._call_llm(
-                [{"role": "user", "content": f"{region.id}"}]
+        """Handle region pointer event (on_point / on_help)."""
+        # Build router input
+        router_input = RouterInput(
+            state=state,
+            error_code=error_code,
+            material_id=material_id,
+            current_region_id=region.id,
+            last_region_id=self._last_region_id,
+            candidates=self._build_candidates([region]),
+        )
+
+        # Call router to determine action
+        router_output = await self._router.route(router_input)
+        action = router_output.action
+        args = router_output.args
+
+        # Execute action
+        if action == "recover_suggest":
+            return await self._handle_error_recovery(error_code)
+        elif action == "respond_script":
+            mode = args.get("mode", "point")
+            script_event = "on_help" if mode == "help" else "on_point"
+            return await self._respond_from_script(
+                region, script_event, router_output
             )
-        return await self._run_commands(command_names, source="script")
-
-    async def on_text(self, user_text: str) -> DialogueResponse:
-        text = user_text.strip()
-        intent_cfg = self._scripts.intent
-
-        # 1) Greeting-only is always allowed.
-        if self._is_greeting_only(text, intent_cfg.greeting_terms):
-            msg = intent_cfg.greeting_reply
+        elif action == "generate_explanation":
+            style = args.get("style", "hint")
+            return await self._generate_with_deepseek(
+                region, material_id, style, router_output
+            )
+        elif action == "repeat_last":
+            return self._repeat_last(router_output)
+        elif action == "reject":
+            reason = args.get("reason", "")
+            return await self._reject_request(reason, router_output)
+        elif action == "clarify":
+            question = args.get("question", "どの問題のことか教えてね。")
             return DialogueResponse(
-                text=msg, commands=[{"SAY": msg}], source="script"
+                text=question,
+                commands=[{"SAY": question}],
+                source="router",
+                router_action=action,
+                router_fallback=router_output.fallback_used,
+            )
+        else:
+            # Fallback
+            return DialogueResponse(
+                text="うまく理解できなかったよ。もう一度教えてね。",
+                commands=[{"SAY": "うまく理解できなかったよ。もう一度教えてね。"}],
+                source="router",
+                router_action=action,
+                router_fallback=True,
             )
 
-        # 2) Ask LLM to classify intent via JSON.
-        role = self._scripts.role
-        on_topic = "\n".join([f"- {item}" for item in intent_cfg.on_topic])
-        off_topic = "\n".join([f"- {item}" for item in intent_cfg.off_topic])
-        system = "\n".join(
-            [
-                f"あなたは{role.name}。口調:{role.tone}。",
-                "次のJSONだけを返して。他の文字は絶対に出さない。",
-                '{"intent":"GREETING|ON_TOPIC|OFF_TOPIC","reply":"..."}',
-                "intentの基準:",
-                "- GREETING: 挨拶、短い返事",
-                "- ON_TOPIC: 教材の内容/問題/このアプリの使い方/学習の進め方/TeachArmの操作など",
-                "- OFF_TOPIC: ゲームに誘う、雑談を続ける、学習と無関係な話題（天気/恋バナ/暇つぶし等）",
-                "ON_TOPICの具体例:",
-                on_topic,
-                "OFF_TOPICの具体例:",
-                off_topic,
-                "ON_TOPICの返答ルール:",
-                *[f"- {r}" for r in role.rules],
-                "OFF_TOPICのとき reply は短く断って、学習に戻す質問を1つ添える。",
-            ]
+    async def on_text(
+        self,
+        user_text: str,
+        material_id: Optional[str] = None,
+        current_region: Optional[Region] = None,
+        state: str = "IDLE",
+    ) -> DialogueResponse:
+        """Handle user text input through Router."""
+        text = user_text.strip()
+
+        # Quick greeting check
+        if self._is_greeting_only(text):
+            msg = self._scripts.intent.greeting_reply
+            response = DialogueResponse(
+                text=msg,
+                commands=[{"SAY": msg}],
+                source="script",
+            )
+            self._last_response = response
+            return response
+
+        # Build router input
+        router_input = RouterInput(
+            state=state,
+            asr_text=text,
+            material_id=material_id,
+            current_region_id=(
+                current_region.id if current_region else None
+            ),
+            last_region_id=self._last_region_id,
+            candidates=self._build_candidates(
+                [current_region] if current_region else []
+            ),
         )
 
-        raw = await self._call_llm(
-            [{"role": "system", "content": system}, {"role": "user", "content": text}]
+        # Call router
+        router_output = await self._router.route(router_input)
+        action = router_output.action
+        args = router_output.args
+
+        # Execute action
+        if action == "respond_script" and current_region:
+            mode = args.get("mode", "point")
+            script_event = "on_help" if mode == "help" else "on_point"
+            return await self._respond_from_script(
+                current_region, script_event, router_output
+            )
+        elif action == "generate_explanation" and current_region:
+            style = args.get("style", "hint")
+            return await self._generate_with_deepseek(
+                current_region, material_id or "", style, router_output
+            )
+        elif action == "repeat_last":
+            return self._repeat_last(router_output)
+        elif action == "reject":
+            reason = args.get("reason", "")
+            return await self._reject_request(reason, router_output)
+        elif action == "clarify":
+            question = args.get("question", "どの問題のことか教えてね。")
+            return DialogueResponse(
+                text=question,
+                commands=[{"SAY": question}],
+                source="router",
+                router_action=action,
+                router_fallback=router_output.fallback_used,
+            )
+        else:
+            # Fallback
+            return DialogueResponse(
+                text="うまく理解できなかったよ。もう一度教えてね。",
+                commands=[{"SAY": "うまく理解できなかったよ。もう一度教えてね。"}],
+                source="router",
+                router_action=action,
+                router_fallback=True,
+            )
+
+    async def _respond_from_script(
+        self, region: Region, event: str, router_output: Any
+    ) -> DialogueResponse:
+        """Generate response from region script."""
+        script = getattr(region, "script", None)
+        if not script:
+            # No script available, generate with DeepSeek
+            return await self._generate_with_deepseek(
+                region, "", "hint", router_output
+            )
+
+        command_names = script.get(event, [])
+        if not command_names:
+            return await self._generate_with_deepseek(
+                region, "", "hint", router_output
+            )
+
+        response = await self._run_commands(command_names, "script")
+        response.router_action = router_output.action
+        response.router_fallback = router_output.fallback_used
+        self._last_response = response
+        self._last_region_id = region.id
+        return response
+
+    async def _generate_with_deepseek(
+        self,
+        region: Region,
+        material_id: str,
+        style: str,
+        router_output: Any,
+    ) -> DialogueResponse:
+        """Generate explanation using DeepSeek."""
+        result = await self._deepseek.generate_explanation(
+            region, material_id, style
         )
 
-        intent = "ON_TOPIC"
-        reply = raw.text
-        try:
-            obj = json.loads(raw.text)
-            intent = obj.get("intent", "ON_TOPIC")
-            reply = obj.get("reply", "") or ""
-        except Exception:  # noqa: BLE001
-            pass
+        response = DialogueResponse(
+            text=result.text,
+            commands=[{"SAY": result.text}],
+            source="deepseek",
+            router_action=router_output.action,
+            router_fallback=router_output.fallback_used,
+            deepseek_time_ms=result.request_time_ms,
+        )
+        self._last_response = response
+        self._last_region_id = region.id
+        return response
 
-        # 3) OFF_TOPIC is forced to negative command.
-        if intent == "OFF_TOPIC":
-            return await self._run_commands(["SAY_OUT_OF_SCOPE"], source="negative")
+    def _repeat_last(self, router_output: Any) -> DialogueResponse:
+        """Repeat the last response."""
+        if not self._last_response:
+            return DialogueResponse(
+                text="まだ何も説明していないよ。",
+                commands=[{"SAY": "まだ何も説明していないよ。"}],
+                source="router",
+                router_action="repeat_last",
+                router_fallback=router_output.fallback_used,
+            )
 
-        if not reply:
-            reply = intent_cfg.fallback_reply
-        return DialogueResponse(text=reply, commands=[], source="llm")
+        response = DialogueResponse(
+            text=self._last_response.text,
+            commands=self._last_response.commands,
+            source="router",
+            router_action="repeat_last",
+            router_fallback=router_output.fallback_used,
+        )
+        return response
 
-    @staticmethod
-    def _is_greeting_only(text: str, terms: List[str]) -> bool:
-        if len(text) > 30:
-            return False
-        normalized = re.sub(r"[\s、。,.!！?？ー-]", "", text)
-        return any(normalized == word for word in terms)
+    async def _reject_request(
+        self, reason: str, router_output: Any
+    ) -> DialogueResponse:
+        """Reject out-of-scope request."""
+        return await self._run_commands_with_router(
+            ["SAY_OUT_OF_SCOPE"], "script", router_output
+        )
+
+    async def _handle_error_recovery(
+        self, error_code: Optional[str]
+    ) -> DialogueResponse:
+        """Handle error recovery suggestions."""
+        recovery_messages = {
+            "E_CAM": "カメラが見えないみたい。接続を確認してね。",
+            "E_MARKER": "マーカーが見えないよ。4つ全部が映るようにしてね。",
+            "E_HAND": "手が見えないよ。カメラの前に手を出してみて。",
+            "E_ARM": "アームが動かないみたい。接続を確認してね。",
+            "E_INTERNAL": "ちょっと調子が悪いみたい。もう一度やってみて。",
+        }
+
+        message = recovery_messages.get(
+            error_code or "",
+            "何か問題があるみたい。もう一度やってみてね。",
+        )
+
+        return DialogueResponse(
+            text=message,
+            commands=[{"SAY": message}],
+            source="error_recovery",
+            router_action="recover_suggest",
+        )
 
     async def _run_commands(
         self, names: List[str], source: str
     ) -> DialogueResponse:
+        """Execute command list from scripts."""
         steps: List[Dict] = []
         speech: List[str] = []
         for name in names:
@@ -119,22 +298,37 @@ class DialogueService:
         text = " ".join(speech) if speech else ""
         return DialogueResponse(text=text, commands=steps, source=source)
 
-    async def _call_llm(self, messages: List[Dict]) -> DialogueResponse:
-        url = f"{self._settings.ollama_base_url.rstrip('/')}/api/chat"
-        payload = {
-            "model": self._settings.ollama_model,
-            "messages": messages,
-            "stream": False,
-            "format": "json",
-            "options": {"temperature": 0, "num_predict": 120}
-        }
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(url, json=payload)
-                response.raise_for_status()
-                data = response.json()
-                message = data.get("message", {}).get("content", "")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("LLM call failed: %s", exc)
-            message = "今はうまくお話ができないみたい。また教えてね。"
-        return DialogueResponse(text=message, commands=[], source="llm")
+    async def _run_commands_with_router(
+        self, names: List[str], source: str, router_output: Any
+    ) -> DialogueResponse:
+        """Execute command list and attach router info."""
+        response = await self._run_commands(names, source)
+        response.router_action = router_output.action
+        response.router_fallback = router_output.fallback_used
+        return response
+
+    def _is_greeting_only(self, text: str) -> bool:
+        """Check if text is a greeting only."""
+        if len(text) > 30:
+            return False
+        normalized = re.sub(r"[\s、。,.!！?？ー-]", "", text)
+        terms = self._scripts.intent.greeting_terms
+        return any(normalized == word for word in terms)
+
+    def _build_candidates(
+        self, regions: List[Optional[Region]]
+    ) -> List[Dict[str, Any]]:
+        """Build candidate list for router input."""
+        candidates = []
+        for region in regions:
+            if not region:
+                continue
+            script = getattr(region, "script", None)
+            candidates.append({
+                "id": region.id,
+                "type": region.type,
+                "label": region.label or region.id,
+                "has_help": bool(script and script.get("on_help")),
+                "has_point": bool(script and script.get("on_point")),
+            })
+        return candidates

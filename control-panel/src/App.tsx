@@ -1,10 +1,21 @@
-import { FormEvent, useEffect, useMemo, useState, useCallback } from "react";
+import {
+  FormEvent,
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  type MouseEvent,
+} from "react";
 import { dump as dumpYAML, load as loadYAML } from "js-yaml";
 
 type MaterialSummary = {
   material_id: string;
   regions: number;
   selected: boolean;
+};
+
+type MaterialAssets = {
+  files: string[];
 };
 
 type HealthResponse = {
@@ -24,6 +35,20 @@ type ArmPayload = {
   y: number;
   z: number;
   speed: number;
+};
+
+type CalibrationPoint = {
+  id: string;
+  u: number | null;
+  v: number | null;
+  x: number | null;
+  y: number | null;
+  z: number | null;
+};
+
+type CalibrationData = {
+  version: number;
+  points: CalibrationPoint[];
 };
 
 type ScriptData = {
@@ -69,6 +94,15 @@ const resolveApiBase = () => {
 };
 
 const API_BASE = resolveApiBase();
+
+const parseNullableNumber = (value: string): number | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
 const fetchJSON = async <T,>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -123,6 +157,8 @@ function Section({
 export default function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [materials, setMaterials] = useState<MaterialSummary[]>([]);
+  const [materialAssets, setMaterialAssets] = useState<string[]>([]);
+  const [selectedAsset, setSelectedAsset] = useState<string>("");
   const [log, setLog] = useState<string[]>([]);
   const [pointer, setPointer] = useState<PointerEventPayload>({
     u: 0.5,
@@ -135,6 +171,12 @@ export default function App() {
     z: 0,
     speed: 0.2,
   });
+  const [calibrationData, setCalibrationData] =
+    useState<CalibrationData | null>(null);
+  const [calibrationLoading, setCalibrationLoading] = useState(false);
+  const [calibrationPreviewText, setCalibrationPreviewText] = useState("");
+  const [selectedCalibrationIndex, setSelectedCalibrationIndex] =
+    useState<number | null>(null);
   const [dialogueText, setDialogueText] = useState("");
   const [loading, setLoading] = useState(false);
   const [scriptPath, setScriptPath] = useState("");
@@ -173,6 +215,19 @@ export default function App() {
     }
   };
 
+  const loadMaterialAssets = async () => {
+    try {
+      const data = await fetchJSON<MaterialAssets>("/api/materials/assets");
+      setMaterialAssets(data.files);
+      if (!selectedAsset && data.files.length > 0) {
+        setSelectedAsset(data.files[0]);
+      }
+      appendLog("Material assets loaded");
+    } catch (err) {
+      appendLog(`Assets error: ${(err as Error).message}`);
+    }
+  };
+
   const loadScript = async () => {
     setScriptLoading(true);
     try {
@@ -191,10 +246,25 @@ export default function App() {
     }
   };
 
+  const loadCalibration = async () => {
+    setCalibrationLoading(true);
+    try {
+      const data = await fetchJSON<CalibrationData>("/api/calibration");
+      setCalibrationData(data);
+      appendLog("Calibration loaded");
+    } catch (err) {
+      appendLog(`Calibration error: ${(err as Error).message}`);
+    } finally {
+      setCalibrationLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadHealth();
     loadMaterials();
     loadScript();
+    loadCalibration();
+    loadMaterialAssets();
     const timer = setInterval(() => {
       loadHealth();
     }, 5000);
@@ -299,6 +369,58 @@ export default function App() {
     } finally {
       setScriptLoading(false);
     }
+  };
+
+  const saveCalibration = async () => {
+    if (!calibrationData) return;
+    setCalibrationLoading(true);
+    try {
+      await fetchJSON("/api/calibration", {
+        method: "POST",
+        body: JSON.stringify(calibrationData),
+      });
+      appendLog("Calibration updated");
+    } catch (err) {
+      appendLog(`Calibration save error: ${(err as Error).message}`);
+    } finally {
+      setCalibrationLoading(false);
+    }
+  };
+
+  const updateCalibrationPoint = (
+    index: number,
+    key: keyof CalibrationPoint,
+    value: string,
+  ) => {
+    if (!calibrationData) return;
+    const updated = [...calibrationData.points];
+    const point = updated[index];
+    if (!point) return;
+    updated[index] = {
+      ...point,
+      [key]: parseNullableNumber(value),
+    };
+    setCalibrationData({ ...calibrationData, points: updated });
+  };
+
+  const handleCalibrationClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (!calibrationData) return;
+    if (selectedCalibrationIndex === null) {
+      appendLog("Select a calibration point before clicking.");
+      return;
+    }
+    const target = event.currentTarget;
+    const rect = target.getBoundingClientRect();
+    const u = clamp01((event.clientX - rect.left) / rect.width);
+    const v = clamp01((event.clientY - rect.top) / rect.height);
+    const updated = [...calibrationData.points];
+    const point = updated[selectedCalibrationIndex];
+    if (!point) return;
+    updated[selectedCalibrationIndex] = { ...point, u, v };
+    setCalibrationData({ ...calibrationData, points: updated });
+    appendLog(
+      `Calibration ${point.id} set to u=${u.toFixed(3)}, v=${v.toFixed(3)}`,
+    );
   };
 
   const healthStatus = useMemo(() => {
@@ -659,6 +781,232 @@ export default function App() {
                 安全位置へ
               </button>
             </form>
+          </Section>
+
+          <Section
+            title="座標登録"
+            icon="📍"
+            className="grid-col-12"
+            defaultOpen={false}
+          >
+            {calibrationLoading && (
+              <p className="helper-text">読み込み中...</p>
+            )}
+            {!calibrationLoading && calibrationData && (
+              <div className="calibration">
+                <div className="calibration-preview">
+                  <label>
+                    <span>テキストプレビュー（教材テキストを貼り付け）</span>
+                    <textarea
+                      rows={4}
+                      value={calibrationPreviewText}
+                      onChange={(e) =>
+                        setCalibrationPreviewText(e.target.value)
+                      }
+                    />
+                  </label>
+                  <div
+                    className="calibration-board"
+                    onClick={handleCalibrationClick}
+                  >
+                    <div className="calibration-board-content">
+                      {calibrationPreviewText || "ここをクリックして座標登録"}
+                    </div>
+                    {selectedCalibrationIndex !== null &&
+                      calibrationData.points[selectedCalibrationIndex] &&
+                      calibrationData.points[selectedCalibrationIndex].u !== null &&
+                      calibrationData.points[selectedCalibrationIndex].v !== null && (
+                        <div
+                          className="calibration-marker"
+                          style={{
+                            left: `${
+                              calibrationData.points[selectedCalibrationIndex].u *
+                              100
+                            }%`,
+                            top: `${
+                              calibrationData.points[selectedCalibrationIndex].v *
+                              100
+                            }%`,
+                          }}
+                        />
+                      )}
+                  </div>
+                  <p className="helper-text">
+                    先に表でポイントを選択してから、プレビュー上をクリックしてください。
+                  </p>
+                </div>
+                <div className="calibration-preview">
+                  <label>
+                    <span>PDFプレビュー（教材PDFを選択）</span>
+                    <div className="calibration-row">
+                      <select
+                        value={selectedAsset}
+                        onChange={(e) => setSelectedAsset(e.target.value)}
+                        disabled={materialAssets.length === 0}
+                      >
+                        {materialAssets.length === 0 && (
+                          <option value="">PDFが見つかりません</option>
+                        )}
+                        {materialAssets.map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                      {selectedAsset && (
+                        <a
+                          className="btn-link"
+                          href={`${API_BASE}/api/materials/assets/${encodeURIComponent(
+                            selectedAsset,
+                          )}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          新しいタブで開く
+                        </a>
+                      )}
+                    </div>
+                  </label>
+                  {selectedAsset && (
+                    <div className="calibration-pdf">
+                      <embed
+                        src={`${API_BASE}/api/materials/assets/${encodeURIComponent(
+                          selectedAsset,
+                        )}`}
+                        type="application/pdf"
+                        className="calibration-pdf-frame"
+                      />
+                      <div
+                        className="calibration-pdf-overlay"
+                        onClick={handleCalibrationClick}
+                      >
+                        {selectedCalibrationIndex !== null &&
+                          calibrationData.points[selectedCalibrationIndex] &&
+                          calibrationData.points[selectedCalibrationIndex].u !==
+                            null &&
+                          calibrationData.points[selectedCalibrationIndex].v !==
+                            null && (
+                            <div
+                              className="calibration-marker"
+                              style={{
+                                left: `${
+                                  calibrationData.points[
+                                    selectedCalibrationIndex
+                                  ].u * 100
+                                }%`,
+                                top: `${
+                                  calibrationData.points[
+                                    selectedCalibrationIndex
+                                  ].v * 100
+                                }%`,
+                              }}
+                            />
+                          )}
+                      </div>
+                    </div>
+                  )}
+                  <p className="helper-text">
+                    PDF上のクリックで u/v を登録します（表示範囲に合わせて正規化）。
+                  </p>
+                </div>
+                <div className="calibration-actions">
+                  <button
+                    type="button"
+                    onClick={loadCalibration}
+                    disabled={calibrationLoading}
+                  >
+                    リロード
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-success"
+                    onClick={saveCalibration}
+                    disabled={calibrationLoading}
+                  >
+                    保存
+                  </button>
+                </div>
+                <div className="calibration-table-wrapper">
+                  <table className="calibration-table">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>u</th>
+                        <th>v</th>
+                        <th>x</th>
+                        <th>y</th>
+                        <th>z</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {calibrationData.points.map((point, idx) => (
+                        <tr
+                          key={point.id}
+                          className={
+                            selectedCalibrationIndex === idx
+                              ? "calibration-selected"
+                              : ""
+                          }
+                          onClick={() => setSelectedCalibrationIndex(idx)}
+                        >
+                          <td>{point.id}</td>
+                          <td>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={point.u ?? ""}
+                              onChange={(e) =>
+                                updateCalibrationPoint(idx, "u", e.target.value)
+                              }
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={point.v ?? ""}
+                              onChange={(e) =>
+                                updateCalibrationPoint(idx, "v", e.target.value)
+                              }
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={point.x ?? ""}
+                              onChange={(e) =>
+                                updateCalibrationPoint(idx, "x", e.target.value)
+                              }
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={point.y ?? ""}
+                              onChange={(e) =>
+                                updateCalibrationPoint(idx, "y", e.target.value)
+                              }
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={point.z ?? ""}
+                              onChange={(e) =>
+                                updateCalibrationPoint(idx, "z", e.target.value)
+                              }
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </Section>
 
           <Section

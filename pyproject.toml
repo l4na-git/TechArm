@@ -10,6 +10,3 @@ dependencies = [
   "pydantic==1.10.14",
   "PyYAML==6.0.1",
 ]
-
-[tool.uv]
-python-preference = "only-system"

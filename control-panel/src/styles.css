@@ -699,6 +699,123 @@ button.btn-icon {
   margin: 0.25rem 0;
 }
 
+.calibration {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.calibration-preview textarea {
+  min-height: 120px;
+}
+
+.calibration-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.btn-link {
+  color: var(--accent-blue);
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+
+.btn-link:hover {
+  text-decoration: underline;
+}
+
+.calibration-board {
+  position: relative;
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  min-height: 200px;
+  background: rgba(0, 0, 0, 0.2);
+  cursor: crosshair;
+  overflow: hidden;
+}
+
+.calibration-board-content {
+  white-space: pre-wrap;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.calibration-marker {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  border: 2px solid #0b0f14;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 6px rgba(125, 227, 136, 0.2);
+  pointer-events: none;
+}
+
+.calibration-pdf {
+  position: relative;
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: #0f1318;
+  min-height: 360px;
+}
+
+.calibration-pdf-frame {
+  width: 100%;
+  height: 520px;
+  border: 0;
+  display: block;
+  pointer-events: none;
+}
+
+.calibration-pdf-overlay {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+}
+
+.calibration-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.calibration-table-wrapper {
+  overflow-x: auto;
+}
+
+.calibration-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 520px;
+}
+
+.calibration-table th,
+.calibration-table td {
+  border-bottom: 1px solid var(--border-muted);
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+  font-size: 0.85rem;
+}
+
+.calibration-table th {
+  color: var(--text-secondary);
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.calibration-table tr.calibration-selected {
+  background: rgba(47, 129, 247, 0.12);
+}
+
+.calibration-table input {
+  width: 100%;
+}
+
 /* ===== YAML Preview ===== */
 .raw-yaml {
   margin-top: 1rem;
@@ -866,5 +983,13 @@ button.btn-icon {
 
   .chip {
     font-size: 0.7rem;
+  }
+
+  .calibration-table {
+    min-width: 480px;
+  }
+
+  .calibration-pdf-frame {
+    height: 420px;
   }
 }
