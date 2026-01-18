@@ -47,8 +47,6 @@ try:
     print(f"  - Materials dir: {settings.materials_dir}")
     print(f"  - Scripts dir: {settings.scripts_dir}")
     print(f"  - Config dir: {settings.config_dir}")
-    print(f"  - FunctionGemma URL: {settings.function_gemma_base_url}")
-    print(f"  - FunctionGemma Model: {settings.function_gemma_model}")
     print(f"  - DeepSeek URL: {settings.deepseek_base_url}")
     print(f"  - DeepSeek Model: {settings.deepseek_model}")
 except Exception as e:

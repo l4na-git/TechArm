@@ -5,24 +5,24 @@
 ## 構成
 
 - `teacharm/` – FastAPI サーバ側の Python パッケージ。設定読み込み、教材・スクリプト処理、各サービス stub を含む。
-  - `services/router.py` – FunctionGemma によるルーティング専用サービス（JSON 出力のみ）
+  - `services/router.py` – ルールベースルーティングサービス
   - `services/deepseek.py` – DeepSeek による文章生成専用サービス（必要時のみ呼び出し）
   - `services/dialogue.py` – Router → 台本 → DeepSeek の順で処理する対話オーケストレーション
 - `config/` – Arm 安全領域や VOICEVOX パラメータ、9 点キャリブレーションなどの JSON/YAML。
 - `materials/` – 教材 A/B の領域定義ファイル。
 - `scripts/common.yaml` – 先生ロール・台本コマンド・ネガティブルール・エラー復帰メッセージ。
-- `.env.example` – 環境変数テンプレート（Tailscale IP、FunctionGemma/DeepSeek/VOICEVOX URL 等）。
+- `.env.example` – 環境変数テンプレート（Tailscale IP、DeepSeek/VOICEVOX URL 等）。
 - `control-panel/` – React + Vite 製のコントロールパネル UI。
 
 ## 対話システムのアーキテクチャ
 
-TeachArm の対話システムは、**FunctionGemma（ルーティング専用）** と **DeepSeek（文章生成専用）** を分離した設計です：
+TeachArm の対話システムは、**ルールベースルーティング** と **DeepSeek（文章生成専用）** を組み合わせた設計です：
 
-1. **FunctionGemma（ローカル推論）**
+1. **ルールベースルーティング（ローカル処理）**
    - 入力：状態、ASRテキスト、候補領域など
-   - 出力：次に実行すべきアクション（JSON のみ）
-   - ホワイトリスト検証でアクションを確定
-   - JSON パース失敗時はルールベースにフォールバック
+   - 処理：キーワードマッチングでアクション決定
+   - 出力：次に実行すべきアクション
+   - メリット：高速・確実、ネットワーク不要
 
 2. **台本優先**
    - Router が決定したアクションに従い、まず `scripts/common.yaml` の台本を確認
@@ -61,9 +61,7 @@ python -m teacharm.main
 
 ### 設定チェックリスト
 
-- `.env`：Tailscale IP、FunctionGemma/DeepSeek モデル名、Control Panel URL を実値にする。
-  - `FUNCTION_GEMMA_BASE_URL`：ローカルで動作する FunctionGemma の URL（デフォルト: http://127.0.0.1:11434）
-  - `FUNCTION_GEMMA_MODEL`：ルーティング用モデル（推奨: functiongemma:latest）
+- `.env`：Tailscale IP、DeepSeek モデル名、Control Panel URL を実値にする。
   - `DEEPSEEK_BASE_URL`：自宅サーバーの DeepSeek URL（Tailscale 経由）
   - `DEEPSEEK_MODEL`：文章生成用モデル（例: deepseek-r1:7b）
 - `config/arm_limits.json`：so-101 の安全領域・Safe Pose を測定値で設定。

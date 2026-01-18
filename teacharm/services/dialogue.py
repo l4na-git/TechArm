@@ -1,4 +1,4 @@
-"""Dialogue orchestration with Router (FunctionGemma) and DeepSeek."""
+"""Dialogue orchestration with Router (rule-based) and DeepSeek."""
 
 from __future__ import annotations
 
