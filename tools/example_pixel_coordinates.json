@@ -1,0 +1,39 @@
+{
+  "material_id": "C",
+  "regions": [
+    {
+      "id": "q1",
+      "type": "question",
+      "bbox_pixel": {
+        "x": 96,
+        "y": 54,
+        "w": 1728,
+        "h": 216
+      },
+      "on_point": ["Q1_INTRO"],
+      "on_help": ["Q1_HINT"]
+    },
+    {
+      "id": "line1",
+      "type": "line",
+      "bbox_pixel": {
+        "x": 96,
+        "y": 324,
+        "w": 1728,
+        "h": 108
+      },
+      "on_point": ["READ_LINE_1"]
+    },
+    {
+      "id": "line2",
+      "type": "line",
+      "bbox_pixel": {
+        "x": 96,
+        "y": 486,
+        "w": 1728,
+        "h": 108
+      },
+      "on_point": ["READ_LINE_2"]
+    }
+  ]
+}
