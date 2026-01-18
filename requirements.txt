@@ -5,3 +5,7 @@ pydantic==1.10.14
 PyYAML==6.0.1
 python-dotenv==1.0.1
 types-PyYAML==6.0.12.12
+
+# SO-101 arm control (optional - install when using real hardware)
+# Uncomment the line below when ready to connect to SO-101:
+# lerobot[feetech]>=2.0.0

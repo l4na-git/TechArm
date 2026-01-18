@@ -45,6 +45,18 @@ class Settings(BaseSettings):
         description="Tailscale 内で公開するコントロールパネルのURL",
     )
 
+    # SO-101 Robot Arm
+    so101_port: str = Field(
+        default="/dev/ttyUSB0",
+        env="SO101_PORT",
+        description="USB serial port for SO-101 Follower arm",
+    )
+    so101_baudrate: int = Field(
+        default=1000000, 
+        env="SO101_BAUDRATE",
+        description="Baudrate for SO-101 motor communication",
+    )
+
     allowed_origins: List[str] = Field(
         default_factory=lambda: ["*"],
         env="TEACHARM_ALLOWED_ORIGINS",

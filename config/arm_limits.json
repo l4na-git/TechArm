@@ -1,5 +1,19 @@
 {
+  "_comment": "SO-101 arm configuration - https://huggingface.co/docs/lerobot/en/so101",
+  "robot_type": "so101_follower",
+  "motor_config": {
+    "baudrate": 1000000,
+    "joints": [
+      {"id": 1, "name": "shoulder_pan", "gear_ratio": "1/191", "min_deg": null, "max_deg": null},
+      {"id": 2, "name": "shoulder_lift", "gear_ratio": "1/345", "min_deg": null, "max_deg": null},
+      {"id": 3, "name": "elbow_flex", "gear_ratio": "1/191", "min_deg": null, "max_deg": null},
+      {"id": 4, "name": "wrist_flex", "gear_ratio": "1/147", "min_deg": null, "max_deg": null},
+      {"id": 5, "name": "wrist_roll", "gear_ratio": "1/147", "min_deg": null, "max_deg": null},
+      {"id": 6, "name": "gripper", "gear_ratio": "1/147", "min_deg": null, "max_deg": null}
+    ]
+  },
   "workspace_xyz": {
+    "_comment": "End-effector workspace limits in mm (measure after calibration)",
     "x_min": null,
     "x_max": null,
     "y_min": null,
@@ -9,11 +23,13 @@
   },
   "motion": {
     "max_speed": 0.30,
-    "max_accel": 0.30
+    "max_accel": 0.30,
+    "_comment": "Speed and acceleration limits (0.0-1.0 normalized)"
   },
   "safe_pose": {
-    "x": null,
-    "y": null,
-    "z": null
+    "_comment": "Safe initial pose - joint angles in degrees [j1, j2, j3, j4, j5, j6]",
+    "type": "joint_angles",
+    "angles": [0.0, 45.0, -45.0, 0.0, 0.0, 0.0],
+    "_legacy_xyz": {"x": null, "y": null, "z": null}
   }
 }

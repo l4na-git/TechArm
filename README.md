@@ -64,7 +64,10 @@ python -m teacharm.main
 - `.env`：Tailscale IP、DeepSeek モデル名、Control Panel URL を実値にする。
   - `DEEPSEEK_BASE_URL`：自宅サーバーの DeepSeek URL（Tailscale 経由）
   - `DEEPSEEK_MODEL`：文章生成用モデル（例: deepseek-r1:7b）
-- `config/arm_limits.json`：so-101 の安全領域・Safe Pose を測定値で設定。
+- `config/arm_limits.json`：SO-101 の関節制限・Safe Pose を設定。
+  - SO-101 は 6 つの Feetech STS3215 サーボモーターを使用
+  - 各関節のギア比と可動範囲を記録（詳細: [SO-101 Documentation](https://huggingface.co/docs/lerobot/en/so101)）
+  - `safe_pose.angles` に6軸の安全姿勢を関節角度（度）で指定
 - `config/arm_calibration.json`：9 点 (u,v)→(x,y,z) を入力。
 - `materials/material_*.json`：教材領域（question/line）を実データで記入。
 - `config/voicevox_params.yaml`：VOICEVOX の話速/抑揚などを調整（必要に応じて）。
