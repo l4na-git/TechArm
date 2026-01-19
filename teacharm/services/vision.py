@@ -63,8 +63,8 @@ class CameraConfig(BaseModel):
     hand_detection_method: str = "mediapipe"  # mediapipe or color
     mediapipe_confidence: float = 0.5
     mediapipe_model_complexity: int = 0  # 0 or 1
-    hand_detection_interval: int = 5  # Run hand detection every N frames
-    hand_detection_scale: float = 0.3  # Downscale factor for hand detection
+    hand_detection_interval: int = 8  # Run hand detection every N frames
+    hand_detection_scale: float = 0.25  # Downscale factor for hand detection
     smoothing_window: int = 5
     max_jump_threshold: int = 40
     debug_show_preview: bool = False
@@ -175,10 +175,10 @@ class VisionService:
                     "model_complexity", 0
                 ),
                 hand_detection_interval=hand_cfg.get(
-                    "interval", 5
+                    "interval", 8
                 ),
                 hand_detection_scale=hand_cfg.get(
-                    "scale", 0.3
+                    "scale", 0.25
                 ),
                 smoothing_window=hand_cfg.get("smoothing_window", 5),
                 max_jump_threshold=hand_cfg.get("max_jump_threshold", 40),
