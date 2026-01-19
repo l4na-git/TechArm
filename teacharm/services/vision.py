@@ -773,6 +773,10 @@ class VisionService:
         self, frame: np.ndarray, force_calibrate: bool = False
     ) -> Optional[VisionFrame]:
         """Process a provided frame (used for offload mode)."""
+        height, width = frame.shape[:2]
+        if width != self.config.width or height != self.config.height:
+            self.config.width = width
+            self.config.height = height
         return self._process_frame(frame, force_calibrate=force_calibrate)
 
     def process_frame(self) -> Optional[VisionFrame]:

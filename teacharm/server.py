@@ -155,6 +155,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         last_region_id: Optional[str] = None
         region_dwell_frames = 0
         DWELL_THRESHOLD = 5  # Frames to trigger on_point event
+        OFFLOAD_SCALE = 0.5
+        OFFLOAD_JPEG_QUALITY = 50
 
         try:
             async with websockets.connect(remote_ws_url, max_size=None) as remote_ws:
@@ -164,8 +166,18 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                         await asyncio.sleep(0.1)
                         continue
 
+                    if OFFLOAD_SCALE != 1.0:
+                        frame = cv2.resize(
+                            frame,
+                            None,
+                            fx=OFFLOAD_SCALE,
+                            fy=OFFLOAD_SCALE,
+                            interpolation=cv2.INTER_AREA,
+                        )
                     _, buffer = cv2.imencode(
-                        ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 60]
+                        ".jpg",
+                        frame,
+                        [cv2.IMWRITE_JPEG_QUALITY, OFFLOAD_JPEG_QUALITY],
                     )
                     payload = {"image": base64.b64encode(buffer).decode("utf-8")}
                     if ctx.offload_calibration_requested:
