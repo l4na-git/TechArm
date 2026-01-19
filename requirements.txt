@@ -13,6 +13,9 @@ opencv-contrib-python==4.9.0.80
 numpy==1.26.4
 mediapipe==0.10.9
 faster-whisper==1.0.3
+sounddevice==0.5.3
+pynput==1.7.7
+gpiozero==2.0.1
 
 # SO-101 arm control (optional - install when using real hardware)
 # Uncomment the line below when ready to connect to SO-101:

@@ -28,7 +28,42 @@ python tools/generate_aruco_markers.py \
 
 印刷して教材の四隅に配置してください。
 
-### 2. 座標変換ツール (convert_coordinates.py)
+### 2. マイク録音 + ASR送信 (mic_record_send.py)
+
+マイクから録音して `/api/dialogue/audio` に送信します。
+
+**使用方法:**
+```bash
+python tools/mic_record_send.py --duration 4
+```
+
+**オプション例:**
+```bash
+python tools/mic_record_send.py \
+  --duration 3 \
+  --samplerate 16000 \
+  --endpoint http://localhost:8000/api/asr/transcribe
+```
+
+### 3. 押している間だけ録音（キーボード） (mic_record_send_keyboard.py)
+
+Macなどで、キーを押している間だけ録音して送信します。
+
+**使用方法:**
+```bash
+python tools/mic_record_send_keyboard.py --key space
+```
+
+### 4. 押している間だけ録音（GPIOボタン） (mic_record_send_gpio.py)
+
+Raspberry Piのボタン入力で、押している間だけ録音して送信します。
+
+**使用方法:**
+```bash
+python tools/mic_record_send_gpio.py --pin 17 --pull-up
+```
+
+### 5. 座標変換ツール (convert_coordinates.py)
 
 教材の座標をピクセル値から正規化座標（0.0~1.0）に変換します。
 
@@ -55,7 +90,7 @@ python tools/convert_coordinates.py \
 }
 ```
 
-### 2. 一括変換（JSONファイル）
+### 5. 一括変換（JSONファイル）
 
 **入力ファイル（example_pixel_coordinates.json）:**
 ```json
@@ -106,7 +141,7 @@ python tools/convert_coordinates.py \
 }
 ```
 
-### 3. 標準入力/出力
+### 6. 標準入力/出力
 
 ```bash
 cat tools/example_pixel_coordinates.json | \

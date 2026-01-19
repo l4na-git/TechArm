@@ -40,6 +40,21 @@ curl -X POST http://localhost:8000/api/dialogue/audio \
   -F "audio=@sample.wav"
 ```
 
+### マイク録音→送信（簡易ツール）
+```bash
+python tools/mic_record_send.py --duration 4
+```
+
+### 押している間だけ録音（キーボード）
+```bash
+python tools/mic_record_send_keyboard.py --key space
+```
+
+### 押している間だけ録音（GPIOボタン）
+```bash
+python tools/mic_record_send_gpio.py --pin 17 --pull-up
+```
+
 ## 速度調整の目安
 重い場合は以下を下げてください:
 - `ASR_MODEL=tiny`（最軽量）
