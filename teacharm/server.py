@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import base64
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -155,6 +156,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         last_region_id: Optional[str] = None
         region_dwell_frames = 0
         DWELL_THRESHOLD = 5  # Frames to trigger on_point event
+        ON_POINT_COOLDOWN = 3.0
+        last_trigger_region_id: Optional[str] = None
+        last_trigger_time = 0.0
+        ON_POINT_COOLDOWN = 3.0
+        last_trigger_region_id: Optional[str] = None
+        last_trigger_time = 0.0
         OFFLOAD_SCALE = 0.5
         OFFLOAD_JPEG_QUALITY = 50
 
@@ -226,23 +233,34 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
                                 # Trigger on_point event after dwelling
                                 if region_dwell_frames == DWELL_THRESHOLD:
+                                    now = time.monotonic()
+                                    if (
+                                        current_region_id == last_trigger_region_id
+                                        and now - last_trigger_time < ON_POINT_COOLDOWN
+                                    ):
+                                        pass
+                                    else:
+                                        last_trigger_region_id = current_region_id
+                                        last_trigger_time = now
                                     logger.info(
                                         "Region pointed: %s (material: %s)",
                                         current_region_id,
                                         current_material_id,
                                     )
                                     ctx.state.last_region = current_region_id
-
+                                    
                                     # Fire on_point event
                                     if mapping.region.on_point:
                                         try:
-                                            response = await _build_dialogue_response(
-                                                mapping.region, "on_point"
-                                            )
-                                            logger.info(
-                                                "on_point triggered: %s",
-                                                response.get("text", ""),
-                                            )
+                                            async def _fire_on_point() -> None:
+                                                response = await _build_dialogue_response(
+                                                    mapping.region, "on_point"
+                                                )
+                                                logger.info(
+                                                    "on_point triggered: %s",
+                                                    response.get("text", ""),
+                                                )
+                                            asyncio.create_task(_fire_on_point())
                                         except Exception as e:
                                             logger.error(
                                                 "Error in on_point handler: %s",
@@ -641,6 +659,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                                 
                                 # Trigger on_point event after dwelling
                                 if region_dwell_frames == DWELL_THRESHOLD:
+                                    now = time.monotonic()
+                                    if (
+                                        current_region_id == last_trigger_region_id
+                                        and now - last_trigger_time < ON_POINT_COOLDOWN
+                                    ):
+                                        pass
+                                    else:
+                                        last_trigger_region_id = current_region_id
+                                        last_trigger_time = now
                                     logger.info(
                                         "Region pointed: %s (material: %s)",
                                         current_region_id,
@@ -651,13 +678,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                                     # Fire on_point event
                                     if mapping.region.on_point:
                                         try:
-                                            response = await _build_dialogue_response(
-                                                mapping.region, "on_point"
-                                            )
-                                            logger.info(
-                                                "on_point triggered: %s",
-                                                response.get("text", "")
-                                            )
+                                            async def _fire_on_point() -> None:
+                                                response = await _build_dialogue_response(
+                                                    mapping.region, "on_point"
+                                                )
+                                                logger.info(
+                                                    "on_point triggered: %s",
+                                                    response.get("text", "")
+                                                )
+                                            asyncio.create_task(_fire_on_point())
                                         except Exception as e:
                                             logger.error("Error in on_point handler: %s", e)
                             else:
