@@ -1,0 +1,78 @@
+name: Deploy to Home Server via Tailscale
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Create .env file from secrets
+        run: |
+          cat << EOF > .env
+          # --- DeepSeek (Text Generation - 自宅サーバー、Tailscale経由) ---
+          DEEPSEEK_BASE_URL=${{ secrets.ENV_DEEPSEEK_BASE_URL }}
+          DEEPSEEK_MODEL=${{ secrets.ENV_DEEPSEEK_MODEL }}
+          
+          # --- Ollama (deprecated - 互換性のため残す) ---
+          OLLAMA_BASE_URL=${{ secrets.ENV_OLLAMA_BASE_URL }}
+          OLLAMA_MODEL=${{ secrets.ENV_OLLAMA_MODEL }}
+          
+          # --- VOICEVOX Engine (self-hosted, via Tailscale) ---
+          VOICEVOX_BASE_URL=${{ secrets.ENV_VOICEVOX_BASE_URL }}
+          VOICEVOX_SPEAKER_NAME=${{ secrets.ENV_VOICEVOX_SPEAKER_NAME }}
+          VOICEVOX_STYLE_NAME=${{ secrets.ENV_VOICEVOX_STYLE_NAME }}
+          VOICEVOX_SPEED_SCALE=${{ secrets.ENV_VOICEVOX_SPEED_SCALE }}
+          VOICEVOX_PITCH_SCALE=${{ secrets.ENV_VOICEVOX_PITCH_SCALE }}
+          VOICEVOX_INTONATION_SCALE=${{ secrets.ENV_VOICEVOX_INTONATION_SCALE }}
+          VOICEVOX_VOLUME_SCALE=${{ secrets.ENV_VOICEVOX_VOLUME_SCALE }}
+          VOICEVOX_PRE_PHONEME_LENGTH=${{ secrets.ENV_VOICEVOX_PRE_PHONEME_LENGTH }}
+          VOICEVOX_POST_PHONEME_LENGTH=${{ secrets.ENV_VOICEVOX_POST_PHONEME_LENGTH }}
+          
+          # --- Vision Offload (optional, via Tailscale) ---
+          VISION_OFFLOAD_URL=${{ secrets.ENV_VISION_OFFLOAD_URL }}
+          
+          # --- Control Panel (Tailscale only) ---
+          CONTROL_PANEL_URL=${{ secrets.ENV_CONTROL_PANEL_URL }}
+          
+          # --- ASR (faster-whisper) ---
+          ASR_MODEL=${{ secrets.ENV_ASR_MODEL }}
+          ASR_LANGUAGE=${{ secrets.ENV_ASR_LANGUAGE }}
+          ASR_DEVICE=${{ secrets.ENV_ASR_DEVICE }}
+          ASR_COMPUTE_TYPE=${{ secrets.ENV_ASR_COMPUTE_TYPE }}
+          ASR_BEAM_SIZE=${{ secrets.ENV_ASR_BEAM_SIZE }}
+          
+          # --- SO-101 Robot Arm ---
+          SO101_PORT=${{ secrets.ENV_SO101_PORT }}
+          SO101_BAUDRATE=${{ secrets.ENV_SO101_BAUDRATE }}
+          EOF
+
+      - name: Deploy to server
+        run: |
+          rsync -avz --delete \
+            --exclude '.git' \
+            --exclude '.venv' \
+            --exclude 'node_modules' \
+            --exclude '__pycache__' \
+            --exclude '.mypy_cache' \
+            --exclude '.DS_Store' \
+            --exclude 'cache' \
+            ./ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/
+
+      - name: Run deployment script on server
+        run: |
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            "cd ${{ secrets.DEPLOY_PATH }} && bash scripts/deploy.sh"

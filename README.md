@@ -152,3 +152,31 @@ UI 上で以下の操作が可能です：
 - `scripts/common.yaml` の内容編集（YAML エディタで直接保存可能）
 
 Control Panel は Tailscale 内でのみ公開し、`.env` の `CONTROL_PANEL_URL` にブラウザでアクセスする URL を記入してください。
+
+## 自動デプロイ（GitHub Actions）
+
+本プロジェクトは GitHub Actions を使用して、Tailscale 経由で自宅サーバーへ自動デプロイできます。
+
+### 主な機能
+
+- `main` ブランチへの push で自動デプロイ
+- 環境変数（`.env`）は GitHub Secrets で安全に管理
+- Tailscale ネットワーク経由で安全に転送
+- バックエンドとフロントエンドの自動ビルド・再起動
+
+### セットアップ
+
+詳細な手順については [GitHub Actions デプロイガイド](docs/GitHub_Actions_デプロイガイド.md) を参照してください。
+
+概要：
+1. Tailscale OAuth Client を作成
+2. SSH キーペアを生成
+3. GitHub Secrets を設定（デプロイ設定 + 環境変数）
+4. `main` ブランチに push
+
+デプロイ後、サーバー上で自動的に以下が実行されます：
+- 既存プロセスの停止
+- Python 依存関係のインストール
+- Control Panel のビルド
+- バックエンドとフロントエンドの起動
+

@@ -6,3 +6,9 @@ control-panel/node_modules/
 control-panel/dist/
 control-panel/.vite/
 .DS_Store
+.venv/
+logs/
+*.pid
+*.log
+.mypy_cache/
+cache/
