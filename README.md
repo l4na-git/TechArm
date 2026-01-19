@@ -11,6 +11,7 @@
   - `services/vision.py` – カメラ入力、ArUco検出、MediaPipe Handsによる手検出
   - `services/arm.py` – SO-101 ロボットアーム制御
   - `services/tts.py` – VOICEVOX 音声合成
+  - `services/asr.py` – faster-whisper による音声認識
 - `config/` – Arm 安全領域や VOICEVOX パラメータ、9 点キャリブレーション、カメラ設定などの JSON/YAML。
 - `materials/` – 教材 A/B の領域定義ファイル。
 - `scripts/common.yaml` – 先生ロール・台本コマンド・ネガティブルール・エラー復帰メッセージ。
@@ -60,6 +61,8 @@ python -m teacharm.main
 - `POST /api/materials/select` – 教材選択
 - `POST /api/events/pointer` – ポインタイベント（指差し認識）
 - `POST /api/dialogue` – テキスト入力による対話
+- `POST /api/asr/transcribe` – 音声ファイルの文字起こし（faster-whisper）
+- `POST /api/dialogue/audio` – 音声入力→対話→音声生成
 - `POST /api/arm/move` – アーム移動
 - `POST /api/arm/safe_pose` – アームをセーフポーズに戻す
 - `GET /api/state` – 現在の状態取得
@@ -102,6 +105,7 @@ uv run python test_vision.py
 - `.env`：Tailscale IP、DeepSeek モデル名、Control Panel URL を実値にする。
   - `DEEPSEEK_BASE_URL`：自宅サーバーの DeepSeek URL（Tailscale 経由）
   - `DEEPSEEK_MODEL`：文章生成用モデル（例: deepseek-r1:7b）
+  - `ASR_MODEL` ほか：音声入力（faster-whisper）の設定
 - `config/arm_limits.json`：SO-101 の関節制限・Safe Pose を設定。
   - SO-101 は 6 つの Feetech STS3215 サーボモーターを使用
   - 各関節のギア比と可動範囲を記録（詳細: [SO-101 Documentation](https://huggingface.co/docs/lerobot/en/so101)）

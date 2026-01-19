@@ -51,6 +51,32 @@ class Settings(BaseSettings):
         description="Vision処理をオフロードするサーバーのURL",
     )
 
+    asr_model: str = Field(
+        default="base",
+        env="ASR_MODEL",
+        description="faster-whisper model name or local path",
+    )
+    asr_language: str = Field(
+        default="ja",
+        env="ASR_LANGUAGE",
+        description="Default ASR language code",
+    )
+    asr_device: str = Field(
+        default="cpu",
+        env="ASR_DEVICE",
+        description="ASR device (cpu/cuda)",
+    )
+    asr_compute_type: str = Field(
+        default="int8",
+        env="ASR_COMPUTE_TYPE",
+        description="ASR compute type for faster-whisper",
+    )
+    asr_beam_size: int = Field(
+        default=1,
+        env="ASR_BEAM_SIZE",
+        description="ASR beam size",
+    )
+
     # SO-101 Robot Arm
     so101_port: str = Field(
         default="/dev/ttyUSB0",

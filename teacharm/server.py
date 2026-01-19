@@ -6,10 +6,19 @@ import asyncio
 import json
 import base64
 import time
+import tempfile
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, validator
@@ -26,6 +35,7 @@ from .services.dialogue import DialogueService
 from .services.router import RouterService
 from .services.tts import VoiceVoxService
 from .services.vision import VisionService, VisionFrame
+from .services.asr import ASRService
 from .state import AppState
 
 import cv2
@@ -99,6 +109,7 @@ class TeachArmContext:
         self.dialogue = DialogueService(
             settings, self.scripts, self.router, self.deepseek
         )
+        self.asr = ASRService(settings)
         self.tts = VoiceVoxService(settings)
         arm_limits = self._load_json(settings.config_dir / "arm_limits.json")
         self.arm = ArmService(arm_limits)
@@ -484,6 +495,118 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "deepseek_time_ms": dialogue_resp.deepseek_time_ms,
             },
             "audio_path": str(audio) if audio else None,
+        }
+
+    @app.post("/api/asr/transcribe")
+    async def asr_transcribe(
+        audio: UploadFile = File(...),
+        language: Optional[str] = Form(None),
+    ) -> dict:
+        data = await audio.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="Empty audio upload")
+
+        suffix = Path(audio.filename or "").suffix or ".wav"
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(data)
+                tmp_path = tmp.name
+
+            result = await ctx.asr.transcribe_file(tmp_path, language=language)
+        except Exception as exc:
+            logger.error("ASR transcription failed: %s", exc)
+            raise HTTPException(status_code=500, detail="ASR failed") from exc
+        finally:
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
+
+        return {
+            "text": result.text,
+            "language": result.language,
+            "segments": [
+                {"start": seg.start, "end": seg.end, "text": seg.text}
+                for seg in result.segments
+            ],
+        }
+
+    @app.post("/api/dialogue/audio")
+    async def dialogue_audio(
+        audio: UploadFile = File(...),
+        language: Optional[str] = Form(None),
+    ) -> dict:
+        data = await audio.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="Empty audio upload")
+
+        suffix = Path(audio.filename or "").suffix or ".wav"
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(data)
+                tmp_path = tmp.name
+
+            asr_result = await ctx.asr.transcribe_file(
+                tmp_path, language=language
+            )
+        except Exception as exc:
+            logger.error("ASR transcription failed: %s", exc)
+            raise HTTPException(status_code=500, detail="ASR failed") from exc
+        finally:
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
+
+        if not asr_result.text:
+            return {
+                "asr": {
+                    "text": asr_result.text,
+                    "language": asr_result.language,
+                    "segments": [],
+                },
+                "dialogue": None,
+                "audio_path": None,
+            }
+
+        current_material = ctx.repository.current
+        if not current_material:
+            raise HTTPException(
+                status_code=400, detail="No material selected"
+            )
+        current_region = None
+        if ctx.state.last_region:
+            current_region = current_material.get_region(
+                ctx.state.last_region
+            )
+
+        dialogue_resp = await ctx.dialogue.on_text(
+            user_text=asr_result.text,
+            material_id=ctx.state.active_material,
+            current_region=current_region,
+            state="IDLE" if not current_region else "TARGET_SELECTED",
+        )
+
+        audio_path = None
+        if dialogue_resp.text:
+            audio_path = await ctx.tts.synthesize(dialogue_resp.text)
+
+        return {
+            "asr": {
+                "text": asr_result.text,
+                "language": asr_result.language,
+                "segments": [
+                    {"start": seg.start, "end": seg.end, "text": seg.text}
+                    for seg in asr_result.segments
+                ],
+            },
+            "dialogue": {
+                "text": dialogue_resp.text,
+                "source": dialogue_resp.source,
+                "commands": dialogue_resp.commands,
+                "router_action": dialogue_resp.router_action,
+                "router_fallback": dialogue_resp.router_fallback,
+                "deepseek_time_ms": dialogue_resp.deepseek_time_ms,
+            },
+            "audio_path": str(audio_path) if audio_path else None,
         }
 
     @app.post("/api/arm/move")
