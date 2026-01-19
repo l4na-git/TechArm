@@ -39,6 +39,9 @@ class VisionFrame(BaseModel):
     hand_detected: bool
     fingertip_u: Optional[float] = None
     fingertip_v: Optional[float] = None
+    # Material mapping fields (populated by server)
+    current_region_id: Optional[str] = None
+    current_material_id: Optional[str] = None
     error_code: Optional[str] = None
 
 
@@ -60,6 +63,8 @@ class CameraConfig(BaseModel):
     hand_detection_method: str = "mediapipe"  # mediapipe or color
     mediapipe_confidence: float = 0.5
     mediapipe_model_complexity: int = 0  # 0 or 1
+    hand_detection_interval: int = 5  # Run hand detection every N frames
+    hand_detection_scale: float = 0.3  # Downscale factor for hand detection
     smoothing_window: int = 5
     max_jump_threshold: int = 40
     debug_show_preview: bool = False
@@ -88,6 +93,8 @@ class VisionService:
         )
         self.last_fingertip: Optional[Tuple[float, float]] = None
         self._running = False
+        self._hand_detection_counter = 0
+        self._last_hand_px: Optional[Tuple[int, int]] = None
         
         # Calibration stability tracking
         self.calibration_buffer: deque = deque(maxlen=10)
@@ -166,6 +173,12 @@ class VisionService:
                 ),
                 mediapipe_model_complexity=hand_cfg.get(
                     "model_complexity", 0
+                ),
+                hand_detection_interval=hand_cfg.get(
+                    "interval", 5
+                ),
+                hand_detection_scale=hand_cfg.get(
+                    "scale", 0.3
                 ),
                 smoothing_window=hand_cfg.get("smoothing_window", 5),
                 max_jump_threshold=hand_cfg.get("max_jump_threshold", 40),
@@ -401,17 +414,31 @@ class VisionService:
             return False
 
         try:
-            # Get marker centers
+            # Get inner corners of markers (same as visualization)
+            # This ensures calibration matches what users see
             src_points = []
-            for marker_id in required_ids:
+            corner_indices = [2, 3, 0, 1]  # TL, TR, BR, BL markers -> inner corners
+            for i, marker_id in enumerate(required_ids):
                 corners = marker_corners[marker_id]
-                center = np.mean(corners, axis=0)
-                src_points.append(center)
+                
+                # Debug: Log all corners for this marker
+                logger.debug(f"Marker ID {marker_id} corners:")
+                for ci, corner in enumerate(corners):
+                    logger.debug(f"  Corner {ci}: ({corner[0]:.1f}, {corner[1]:.1f})")
+                
+                # Use inner corner (facing the material area)
+                # ID 0 (top-left): bottom-right corner (index 2)
+                # ID 1 (top-right): bottom-left corner (index 3)
+                # ID 2 (bottom-right): top-left corner (index 0)
+                # ID 3 (bottom-left): top-right corner (index 1)
+                inner_corner = corners[corner_indices[i]]
+                src_points.append(inner_corner)
+                logger.debug(f"  Using corner {corner_indices[i]} as inner: ({inner_corner[0]:.1f}, {inner_corner[1]:.1f})")
 
             src_points = np.array(src_points, dtype=np.float32)
             
-            # Debug: Log marker positions
-            logger.debug("Marker positions:")
+            # Debug: Log marker corner positions
+            logger.debug("Calibration corner positions:")
             for i, (mid, pos) in enumerate(zip(required_ids, src_points)):
                 logger.debug(f"  ID {mid}: ({pos[0]:.1f}, {pos[1]:.1f})")
 
@@ -433,6 +460,11 @@ class VisionService:
             # Define destination points in normalized coordinates
             # Then scale to frame size
             w, h = self.config.width, self.config.height
+            # Map markers directly to normalized coordinates:
+            # ID 0 -> (0, 0) left-top
+            # ID 1 -> (w, 0) right-top
+            # ID 2 -> (w, h) right-bottom
+            # ID 3 -> (0, h) left-bottom
             dst_points = np.array(
                 [[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float32
             )
@@ -549,9 +581,27 @@ class VisionService:
     def pixel_to_normalized(
         self, x: int, y: int
     ) -> Tuple[float, float]:
-        """Convert pixel coordinates to normalized (0-1) coordinates."""
-        u = x / self.config.width
-        v = y / self.config.height
+        """Convert pixel coordinates to normalized (0-1) coordinates.
+
+        Applies perspective calibration when available so mapping matches
+        the warped preview/material coordinate space.
+        """
+        warped_x = float(x)
+        warped_y = float(y)
+        if self.perspective_matrix is not None:
+            try:
+                point = np.array([[[x, y]]], dtype=np.float32)
+                warped = cv2.perspectiveTransform(point, self.perspective_matrix)
+                warped_x, warped_y = warped[0][0]
+            except Exception as e:
+                logger.warning("Failed to warp point for normalization: %s", e)
+
+        u = warped_x / self.config.width
+        v = warped_y / self.config.height
+
+        # Clamp to [0, 1] to avoid out-of-bounds mapping after warp.
+        u = max(0.0, min(1.0, u))
+        v = max(0.0, min(1.0, v))
         return u, v
 
     def detect_hand_color_based(
@@ -612,8 +662,19 @@ class VisionService:
             return None
 
         try:
+            detection_frame = frame
+            scale = self.config.hand_detection_scale
+            if scale != 1.0:
+                detection_frame = cv2.resize(
+                    frame,
+                    None,
+                    fx=scale,
+                    fy=scale,
+                    interpolation=cv2.INTER_AREA,
+                )
+
             # Convert BGR to RGB for MediaPipe
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            rgb_frame = cv2.cvtColor(detection_frame, cv2.COLOR_BGR2RGB)
             
             # Make frame writeable=False for better performance
             rgb_frame.flags.writeable = False
@@ -708,6 +769,12 @@ class VisionService:
 
         return None
 
+    def process_frame_from_image(
+        self, frame: np.ndarray, force_calibrate: bool = False
+    ) -> Optional[VisionFrame]:
+        """Process a provided frame (used for offload mode)."""
+        return self._process_frame(frame, force_calibrate=force_calibrate)
+
     def process_frame(self) -> Optional[VisionFrame]:
         """
         Process a single frame: capture, detect markers, detect hand.
@@ -717,31 +784,46 @@ class VisionService:
         frame = self.capture_frame()
         if frame is None:
             return None
+        return self._process_frame(frame, force_calibrate=False)
 
+    def _process_frame(
+        self, frame: np.ndarray, force_calibrate: bool
+    ) -> Optional[VisionFrame]:
+        """Shared vision pipeline for captured or provided frames."""
         timestamp = time.time()
 
         # Detect ArUco markers
         marker_ids, marker_corners = self.detect_aruco_markers(frame)
 
-        # Auto-calibrate if enabled and 4 markers detected
+        # Auto-calibrate if enabled and 4 markers detected (keep updating even after calibrated)
         is_calibrated = self.perspective_matrix is not None
-        if (
-            not is_calibrated 
-            and len(marker_ids) >= 4 
-            and self.auto_calibrate_enabled
-        ):
+        if force_calibrate and len(marker_ids) >= 4:
+            recalibrated = self.calibrate_perspective(
+                marker_corners, force=True
+            )
+            if recalibrated:
+                self.calibration_frame_count = 0
+            is_calibrated = self.perspective_matrix is not None
+        elif len(marker_ids) >= 4 and self.auto_calibrate_enabled:
             # Accumulate calibration data
             self.calibration_frame_count += 1
-            
+
             # Auto-calibrate after seeing markers for multiple frames
             if self.calibration_frame_count >= 10:
-                logger.info("Auto-calibrating (seen markers for 10 frames)")
-                is_calibrated = self.calibrate_perspective(
+                log_msg = (
+                    "Auto-calibrating (seen markers for 10 frames)"
+                    if not is_calibrated
+                    else "Auto-recalibrating (seen markers for 10 frames)"
+                )
+                logger.info(log_msg)
+                recalibrated = self.calibrate_perspective(
                     marker_corners, force=False
                 )
-                if is_calibrated:
+                if recalibrated:
                     self.calibration_frame_count = 0
-        elif len(marker_ids) < 4:
+                # Keep current calibration if recalibration fails.
+                is_calibrated = self.perspective_matrix is not None
+        else:
             # Reset counter if we lose markers
             self.calibration_frame_count = 0
 
@@ -751,7 +833,13 @@ class VisionService:
         fingertip_u = None
         fingertip_v = None
 
-        fingertip_px = self.detect_hand(frame)
+        interval = max(1, int(self.config.hand_detection_interval))
+        self._hand_detection_counter = (self._hand_detection_counter + 1) % interval
+        if self._hand_detection_counter == 0:
+            fingertip_px = self.detect_hand(frame)
+            self._last_hand_px = fingertip_px
+        else:
+            fingertip_px = self._last_hand_px
         smoothed = self.smooth_fingertip(fingertip_px)
 
         # Draw visualizations on original frame BEFORE warping
@@ -776,22 +864,41 @@ class VisionService:
             
             # Draw calibration boundary if we have all 4 markers
             if len(marker_ids) == 4 and set(marker_ids) == {0, 1, 2, 3}:
-                centers = []
+                # Use outer corners of markers (not centers) to show actual calibration area
+                # This matches the coordinate system that users register materials in
+                outer_corners = []
                 for mid in [0, 1, 2, 3]:  # Ordered: TL, TR, BR, BL
                     corners = marker_corners[mid]
-                    center = np.mean(corners, axis=0).astype(np.int32)
-                    centers.append(center)
+                    # Get the inner corner of each marker (closest to center)
+                    # ID 0 (top-left): bottom-right corner (index 2)
+                    # ID 1 (top-right): bottom-left corner (index 3)
+                    # ID 2 (bottom-right): top-left corner (index 0)
+                    # ID 3 (bottom-left): top-right corner (index 1)
+                    corner_indices = [2, 3, 0, 1]
+                    inner_corner = corners[corner_indices[mid]].astype(np.int32)
+                    outer_corners.append(inner_corner)
                 
                 # Draw yellow quadrilateral showing calibration area
-                pts = np.array(centers, np.int32).reshape((-1, 1, 2))
+                pts = np.array(outer_corners, np.int32).reshape((-1, 1, 2))
                 cv2.polylines(display_frame, [pts], True, (0, 255, 255), 3)
 
-        # Draw hand detection on original frame before warping
-        if smoothed is not None:
+        # Compute warped fingertip for calibrated preview (if available)
+        warped_fingertip = None
+        if smoothed is not None and self.perspective_matrix is not None:
+            try:
+                point = np.array([[[smoothed[0], smoothed[1]]]], dtype=np.float32)
+                warped = cv2.perspectiveTransform(point, self.perspective_matrix)
+                warped_x, warped_y = warped[0][0]
+                warped_fingertip = (int(warped_x), int(warped_y))
+            except Exception as e:
+                logger.warning("Failed to warp fingertip for preview: %s", e)
+
+        # Draw hand detection on original frame before warping (when not calibrated)
+        if smoothed is not None and not is_calibrated:
             x, y = int(smoothed[0]), int(smoothed[1])
             cv2.circle(display_frame, (x, y), 15, (0, 255, 0), -1)
             cv2.circle(display_frame, (x, y), 20, (255, 255, 255), 2)
-            
+
             # Draw crosshair
             cv2.line(display_frame, (x - 30, y), (x + 30, y), (0, 255, 0), 2)
             cv2.line(display_frame, (x, y - 30), (x, y + 30), (0, 255, 0), 2)
@@ -801,6 +908,15 @@ class VisionService:
             warped = self.warp_frame(display_frame)
             if warped is not None:
                 display_frame = warped
+
+                # Draw fingertip on calibrated preview in warped coordinates
+                if warped_fingertip is not None:
+                    x, y = warped_fingertip
+                    if 0 <= x < self.config.width and 0 <= y < self.config.height:
+                        cv2.circle(display_frame, (x, y), 15, (0, 255, 0), -1)
+                        cv2.circle(display_frame, (x, y), 20, (255, 255, 255), 2)
+                        cv2.line(display_frame, (x - 30, y), (x + 30, y), (0, 255, 0), 2)
+                        cv2.line(display_frame, (x, y - 30), (x, y + 30), (0, 255, 0), 2)
 
         # Store frames for preview
         self.last_frame = frame

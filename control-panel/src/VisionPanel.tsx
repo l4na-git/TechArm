@@ -7,6 +7,9 @@ type VisionFrame = {
   hand_detected: boolean;
   fingertip_u: number | null;
   fingertip_v: number | null;
+  current_region_id: string | null;
+  current_material_id: string | null;
+  dwell_frames?: number;
   image?: string | null; // Base64-encoded JPEG
 };
 
@@ -104,12 +107,23 @@ export function VisionPanel({ apiUrl }: VisionPanelProps) {
     ws.onmessage = (event) => {
       try {
         const frame: VisionFrame = JSON.parse(event.data);
-        console.log("[Vision] Received frame:", {
-          timestamp: frame.timestamp,
-          markers: frame.markers_detected.length,
-          hand: frame.hand_detected,
-          hasImage: !!frame.image,
-        });
+        
+        // Log region changes
+        if (frame.current_region_id !== visionFrame?.current_region_id) {
+          if (frame.current_region_id) {
+            console.log("[Vision] Entering region:", frame.current_region_id, 
+                       `(material: ${frame.current_material_id})`);
+          } else if (visionFrame?.current_region_id) {
+            console.log("[Vision] Left region:", visionFrame.current_region_id);
+          }
+        }
+        
+        // Log dwell progress
+        if (frame.dwell_frames && frame.dwell_frames > 0 && frame.dwell_frames % 2 === 0) {
+          console.log("[Vision] Dwelling in region:", frame.current_region_id,
+                     `(${frame.dwell_frames}/5 frames)`);
+        }
+        
         setVisionFrame(frame);
         setIsCalibrated(frame.is_calibrated);
         frameCountRef.current++;
@@ -214,6 +228,20 @@ export function VisionPanel({ apiUrl }: VisionPanelProps) {
                   </span>
                 </div>
               )}
+
+            {visionFrame?.current_region_id && (
+              <div className="status-item region-info">
+                <span className="status-label">Region:</span>
+                <span className="status-value success">
+                  {visionFrame.current_region_id}
+                  {visionFrame.dwell_frames && visionFrame.dwell_frames > 0 && (
+                    <span className="dwell-indicator">
+                      {" "}({visionFrame.dwell_frames}/5)
+                    </span>
+                  )}
+                </span>
+              </div>
+            )}
           </div>
 
           {!isCalibrated && visionFrame && visionFrame.markers_detected.length < 4 && (
@@ -313,6 +341,24 @@ export function VisionPanel({ apiUrl }: VisionPanelProps) {
           font-size: 0.875rem;
           color: #6c757d;
           font-weight: normal;
+        }
+
+        .region-info {
+          grid-column: span 2;
+          padding: 0.5rem;
+          background: #e8f5e9;
+          border-radius: 4px;
+        }
+
+        .region-info .status-value {
+          font-weight: 600;
+        }
+
+        .dwell-indicator {
+          font-size: 0.75rem;
+          color: #666;
+          font-weight: normal;
+          margin-left: 0.5rem;
         }
 
         .vision-hint {

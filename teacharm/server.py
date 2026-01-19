@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import base64
 from pathlib import Path
 from typing import List, Optional
 
@@ -23,8 +24,12 @@ from .services.deepseek import DeepSeekService
 from .services.dialogue import DialogueService
 from .services.router import RouterService
 from .services.tts import VoiceVoxService
-from .services.vision import VisionService
+from .services.vision import VisionService, VisionFrame
 from .state import AppState
+
+import cv2
+import numpy as np
+import websockets
 
 logger = get_logger(__name__)
 
@@ -99,6 +104,7 @@ class TeachArmContext:
         self.vision = VisionService(settings)
         self.calibration_path = settings.config_dir / "arm_calibration.json"
         self.calibration = self._load_json(self.calibration_path)
+        self.offload_calibration_requested = False
 
     def reload_scripts(self) -> None:
         self.scripts = load_scripts(self.scripts_path)
@@ -128,6 +134,132 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    def _build_offload_ws_url(base_url: str) -> str:
+        trimmed = base_url.rstrip("/")
+        if trimmed.startswith("http://"):
+            trimmed = "ws://" + trimmed[len("http://"):]
+        elif trimmed.startswith("https://"):
+            trimmed = "wss://" + trimmed[len("https://"):]
+        return f"{trimmed}/ws/vision_offload"
+
+    async def _websocket_vision_offload_proxy(websocket: WebSocket) -> None:
+        offload_url = ctx.settings.vision_offload_url
+        if not offload_url:
+            return
+
+        remote_ws_url = _build_offload_ws_url(offload_url)
+        logger.info("Vision offload proxy connecting to %s", remote_ws_url)
+
+        # Track last region for event triggering
+        last_region_id: Optional[str] = None
+        region_dwell_frames = 0
+        DWELL_THRESHOLD = 5  # Frames to trigger on_point event
+
+        try:
+            async with websockets.connect(remote_ws_url, max_size=None) as remote_ws:
+                while True:
+                    frame = ctx.vision.capture_frame()
+                    if frame is None:
+                        await asyncio.sleep(0.1)
+                        continue
+
+                    _, buffer = cv2.imencode(
+                        ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 60]
+                    )
+                    payload = {"image": base64.b64encode(buffer).decode("utf-8")}
+                    if ctx.offload_calibration_requested:
+                        payload["force_calibrate"] = True
+                        ctx.offload_calibration_requested = False
+
+                    await remote_ws.send(json.dumps(payload))
+                    response = await remote_ws.recv()
+                    data = json.loads(response)
+                    image = data.pop("image", None)
+
+                    vision_frame = VisionFrame(**data)
+
+                    # Map fingertip to material region if hand detected
+                    current_region_id = None
+                    current_material_id = None
+
+                    if (
+                        vision_frame.hand_detected
+                        and vision_frame.fingertip_u is not None
+                    ):
+                        mapping = ctx.repository.map_point(
+                            vision_frame.fingertip_u,
+                            vision_frame.fingertip_v,
+                        )
+
+                        if mapping.region:
+                            current_region_id = mapping.region.id
+                            current_material_id = mapping.material_id
+
+                            # Debug: Log coordinates and region
+                            logger.debug(
+                                "Hand at (%.3f, %.3f) -> region %s (bbox: x=%.3f, y=%.3f, w=%.3f, h=%.3f)",
+                                vision_frame.fingertip_u,
+                                vision_frame.fingertip_v,
+                                current_region_id,
+                                mapping.region.bbox.x,
+                                mapping.region.bbox.y,
+                                mapping.region.bbox.w,
+                                mapping.region.bbox.h,
+                            )
+
+                            # Track region dwelling for event triggering
+                            if current_region_id == last_region_id:
+                                region_dwell_frames += 1
+
+                                # Trigger on_point event after dwelling
+                                if region_dwell_frames == DWELL_THRESHOLD:
+                                    logger.info(
+                                        "Region pointed: %s (material: %s)",
+                                        current_region_id,
+                                        current_material_id,
+                                    )
+                                    ctx.state.last_region = current_region_id
+
+                                    # Fire on_point event
+                                    if mapping.region.on_point:
+                                        try:
+                                            response = await _build_dialogue_response(
+                                                mapping.region, "on_point"
+                                            )
+                                            logger.info(
+                                                "on_point triggered: %s",
+                                                response.get("text", ""),
+                                            )
+                                        except Exception as e:
+                                            logger.error(
+                                                "Error in on_point handler: %s",
+                                                e,
+                                            )
+                            else:
+                                region_dwell_frames = 1
+                                last_region_id = current_region_id
+                        else:
+                            last_region_id = None
+                            region_dwell_frames = 0
+                    else:
+                        last_region_id = None
+                        region_dwell_frames = 0
+
+                    data = vision_frame.dict()
+                    data["current_region_id"] = current_region_id
+                    data["current_material_id"] = current_material_id
+                    data["image"] = image
+                    data["dwell_frames"] = region_dwell_frames
+                    await websocket.send_json(data)
+
+                    # Send at ~10fps
+                    await asyncio.sleep(0.1)
+
+        except WebSocketDisconnect:
+            logger.info("Vision offload proxy client disconnected")
+        except Exception as e:
+            logger.error("Vision offload proxy error: %s", e)
 
     @app.get("/health")
     async def health() -> dict:
@@ -407,7 +539,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.post("/api/vision/calibrate")
     async def calibrate_vision() -> dict:
         """Trigger ArUco calibration."""
+        if ctx.settings.vision_offload_url:
+            ctx.offload_calibration_requested = True
+            return {"status": "requested"}
+
         frame = ctx.vision.capture_frame()
+        if frame is None:
+            # Fallback to last processed frame if available.
+            frame = ctx.vision.last_frame
         if frame is None:
             raise HTTPException(
                 status_code=400, detail="Camera not started"
@@ -433,30 +572,123 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         WebSocket endpoint for streaming vision frames with video.
         
         Sends VisionFrame JSON with base64-encoded image at ~10fps.
+        Includes material region mapping when hand is detected.
         """
         await websocket.accept()
         logger.info("Vision WebSocket client connected")
+
+        if ctx.settings.vision_offload_url:
+            await _websocket_vision_offload_proxy(websocket)
+            return
         
+        # Track last region for event triggering
+        last_region_id: Optional[str] = None
+        region_dwell_frames = 0
+        DWELL_THRESHOLD = 5  # Frames to trigger on_point event
+        
+        # Preview throttling to reduce CPU load
+        preview_frame_count = 0
+        last_image_base64: Optional[str] = None
+        PREVIEW_EVERY_N = 3
+        PREVIEW_SCALE = 0.4
+        PREVIEW_JPEG_QUALITY = 40
+
         try:
             while True:
                 vision_frame = ctx.vision.process_frame()
                 if vision_frame is not None:
-                    # Get current frame for preview
-                    import base64
-                    import cv2
+                    # Map fingertip to material region if hand detected
+                    current_region_id = None
+                    current_material_id = None
                     
-                    preview_frame = ctx.vision.get_preview_frame()
-                    
-                    # Encode frame to JPEG
-                    if preview_frame is not None:
-                        _, buffer = cv2.imencode('.jpg', preview_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                        frame_base64 = base64.b64encode(buffer).decode('utf-8')
+                    if vision_frame.hand_detected and vision_frame.fingertip_u is not None:
+                        mapping = ctx.repository.map_point(
+                            vision_frame.fingertip_u,
+                            vision_frame.fingertip_v
+                        )
+                        
+                        if mapping.region:
+                            current_region_id = mapping.region.id
+                            current_material_id = mapping.material_id
+                            
+                            # Debug: Log coordinates and region
+                            logger.debug(
+                                "Hand at (%.3f, %.3f) -> region %s (bbox: x=%.3f, y=%.3f, w=%.3f, h=%.3f)",
+                                vision_frame.fingertip_u,
+                                vision_frame.fingertip_v,
+                                current_region_id,
+                                mapping.region.bbox.x,
+                                mapping.region.bbox.y,
+                                mapping.region.bbox.w,
+                                mapping.region.bbox.h
+                            )
+                            
+                            # Track region dwelling for event triggering
+                            if current_region_id == last_region_id:
+                                region_dwell_frames += 1
+                                
+                                # Trigger on_point event after dwelling
+                                if region_dwell_frames == DWELL_THRESHOLD:
+                                    logger.info(
+                                        "Region pointed: %s (material: %s)",
+                                        current_region_id,
+                                        current_material_id
+                                    )
+                                    ctx.state.last_region = current_region_id
+                                    
+                                    # Fire on_point event
+                                    if mapping.region.on_point:
+                                        try:
+                                            response = await _build_dialogue_response(
+                                                mapping.region, "on_point"
+                                            )
+                                            logger.info(
+                                                "on_point triggered: %s",
+                                                response.get("text", "")
+                                            )
+                                        except Exception as e:
+                                            logger.error("Error in on_point handler: %s", e)
+                            else:
+                                region_dwell_frames = 1
+                                last_region_id = current_region_id
+                        else:
+                            last_region_id = None
+                            region_dwell_frames = 0
                     else:
-                        frame_base64 = None
+                        last_region_id = None
+                        region_dwell_frames = 0
+                    
+                    # Add mapping info to frame
+                    vision_frame.current_region_id = current_region_id
+                    vision_frame.current_material_id = current_material_id
+                    
+                    # Get current frame for preview
+                    preview_frame = ctx.vision.get_preview_frame()
+                    preview_frame_count += 1
+                    
+                    # Encode frame to JPEG (throttled + downscaled)
+                    frame_base64 = last_image_base64
+                    if preview_frame is not None and preview_frame_count % PREVIEW_EVERY_N == 0:
+                        if PREVIEW_SCALE != 1.0:
+                            preview_frame = cv2.resize(
+                                preview_frame,
+                                None,
+                                fx=PREVIEW_SCALE,
+                                fy=PREVIEW_SCALE,
+                                interpolation=cv2.INTER_AREA,
+                            )
+                        _, buffer = cv2.imencode(
+                            ".jpg",
+                            preview_frame,
+                            [cv2.IMWRITE_JPEG_QUALITY, PREVIEW_JPEG_QUALITY],
+                        )
+                        frame_base64 = base64.b64encode(buffer).decode("utf-8")
+                        last_image_base64 = frame_base64
                     
                     # Send frame data with image
                     data = vision_frame.dict()
                     data['image'] = frame_base64
+                    data['dwell_frames'] = region_dwell_frames  # For UI feedback
                     await websocket.send_json(data)
                 
                 # Send at ~10fps
@@ -466,5 +698,74 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             logger.info("Vision WebSocket client disconnected")
         except Exception as e:
             logger.error("Vision WebSocket error: %s", e)
+
+    @app.websocket("/ws/vision_offload")
+    async def websocket_vision_offload(websocket: WebSocket) -> None:
+        """
+        WebSocket endpoint for vision offload processing.
+
+        Receives JPEG frames and returns VisionFrame JSON with preview image.
+        """
+        await websocket.accept()
+        logger.info("Vision offload WebSocket client connected")
+
+        preview_frame_count = 0
+        last_image_base64: Optional[str] = None
+        PREVIEW_EVERY_N = 3
+        PREVIEW_SCALE = 0.4
+        PREVIEW_JPEG_QUALITY = 40
+
+        try:
+            while True:
+                message = await websocket.receive_text()
+                payload = json.loads(message)
+                image_base64 = payload.get("image")
+                if not image_base64:
+                    continue
+
+                frame_bytes = base64.b64decode(image_base64)
+                frame_array = np.frombuffer(frame_bytes, dtype=np.uint8)
+                frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+                if frame is None:
+                    continue
+
+                force_calibrate = bool(payload.get("force_calibrate"))
+                vision_frame = ctx.vision.process_frame_from_image(
+                    frame, force_calibrate=force_calibrate
+                )
+                if vision_frame is None:
+                    continue
+
+                preview_frame = ctx.vision.get_preview_frame()
+                preview_frame_count += 1
+                frame_base64 = last_image_base64
+                if (
+                    preview_frame is not None
+                    and preview_frame_count % PREVIEW_EVERY_N == 0
+                ):
+                    if PREVIEW_SCALE != 1.0:
+                        preview_frame = cv2.resize(
+                            preview_frame,
+                            None,
+                            fx=PREVIEW_SCALE,
+                            fy=PREVIEW_SCALE,
+                            interpolation=cv2.INTER_AREA,
+                        )
+                    _, buffer = cv2.imencode(
+                        ".jpg",
+                        preview_frame,
+                        [cv2.IMWRITE_JPEG_QUALITY, PREVIEW_JPEG_QUALITY],
+                    )
+                    frame_base64 = base64.b64encode(buffer).decode("utf-8")
+                    last_image_base64 = frame_base64
+
+                data = vision_frame.dict()
+                data["image"] = frame_base64
+                await websocket.send_text(json.dumps(data))
+
+        except WebSocketDisconnect:
+            logger.info("Vision offload WebSocket client disconnected")
+        except Exception as e:
+            logger.error("Vision offload WebSocket error: %s", e)
 
     return app

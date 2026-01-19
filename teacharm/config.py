@@ -45,6 +45,12 @@ class Settings(BaseSettings):
         description="Tailscale 内で公開するコントロールパネルのURL",
     )
 
+    vision_offload_url: Optional[str] = Field(
+        default=None,
+        env="VISION_OFFLOAD_URL",
+        description="Vision処理をオフロードするサーバーのURL",
+    )
+
     # SO-101 Robot Arm
     so101_port: str = Field(
         default="/dev/ttyUSB0",

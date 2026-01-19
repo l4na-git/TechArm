@@ -7,7 +7,7 @@ import sys
 from typing import Optional
 
 
-def configure_logging(level: int = logging.INFO) -> None:
+def configure_logging(level: int = logging.DEBUG) -> None:
     """Configure application-wide logging."""
     if logging.getLogger().handlers:
         return

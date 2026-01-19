@@ -9,13 +9,13 @@ device:
 
 # Resolution settings
 resolution:
-  width: 1280
-  height: 720
+  width: 960
+  height: 540
 
 # Camera parameters (OpenCV VideoCapture properties)
 parameters:
   # FPS setting
-  fps: 30
+  fps: 15
   # Auto focus (0 = disabled, 1 = enabled)
   autofocus: 0
   # Auto exposure (1 = manual, 3 = auto)
