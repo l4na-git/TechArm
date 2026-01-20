@@ -15,7 +15,7 @@
 - `config/` – Arm 安全領域や VOICEVOX パラメータ、9 点キャリブレーション、カメラ設定などの JSON/YAML。
 - `materials/` – 教材 A/B の領域定義ファイル。
 - `scripts/common.yaml` – 先生ロール・台本コマンド・ネガティブルール・エラー復帰メッセージ。
-- `.env.example` – 環境変数テンプレート（Tailscale IP、DeepSeek/VOICEVOX URL 等）。
+- `.env.example` – 環境変数テンプレート（Tailscale IP、LLM/VOICEVOX URL 等）。
 - `control-panel/` – React + Vite 製のコントロールパネル UI。
 - `docs/` – 各機能の詳細ドキュメント。
 - `tools/` – ArUcoマーカー生成、座標変換、PDF抽出などのユーティリティ。
@@ -102,9 +102,9 @@ uv run python test_vision.py
 
 ### 設定チェックリスト
 
-- `.env`：Tailscale IP、DeepSeek モデル名、Control Panel URL を実値にする。
-  - `DEEPSEEK_BASE_URL`：自宅サーバーの DeepSeek URL（Tailscale 経由）
-  - `DEEPSEEK_MODEL`：文章生成用モデル（例: deepseek-r1:7b）
+- `.env`：Tailscale IP、LLM モデル名、Control Panel URL を実値にする。
+  - `OLLAMA_BASE_URL`：自宅サーバーの LLM URL（Tailscale 経由）
+  - `OLLAMA_MODEL`：文章生成用モデル（例: deepseek-r1:7b）
   - `ASR_MODEL` ほか：音声入力（faster-whisper）の設定
 - `config/arm_limits.json`：SO-101 の関節制限・Safe Pose を設定。
   - SO-101 は 6 つの Feetech STS3215 サーボモーターを使用
@@ -151,7 +151,7 @@ UI 上で以下の操作が可能です：
 - ログの時系列確認（Router アクション、DeepSeek 呼び出し時間を含む）
 - `scripts/common.yaml` の内容編集（YAML エディタで直接保存可能）
 
-Control Panel は Tailscale 内でのみ公開し、`.env` の `CONTROL_PANEL_URL` にブラウザでアクセスする URL を記入してください。
+Control Panel は Tailscale 内でのみ公開し、`.env` の `CONTROL_PANEL_URL` にブラウザでアクセスする URL を記入してください。外部からアクセスする場合は `CONTROL_PANEL_HOST=0.0.0.0` を設定します。
 
 ## 自動デプロイ（GitHub Actions）
 
@@ -160,7 +160,8 @@ Control Panel は Tailscale 内でのみ公開し、`.env` の `CONTROL_PANEL_UR
 ### 主な機能
 
 - `main` ブランチへの push で自動デプロイ
-- 環境変数（`.env`）は GitHub Secrets で安全に管理
+- 機密情報は GitHub Secrets で安全に管理（6項目のみ）
+- 非機密設定は `.env.example` ファイルでリポジトリ管理
 - Tailscale ネットワーク経由で安全に転送
 - バックエンドとフロントエンドの自動ビルド・再起動
 
@@ -170,7 +171,7 @@ Control Panel は Tailscale 内でのみ公開し、`.env` の `CONTROL_PANEL_UR
 
 概要：
 1. Tailscale OAuth Client を作成
-2. SSH キーペアを生成
+2. Tailscale SSH を有効化
 3. GitHub Secrets を設定（デプロイ設定 + 環境変数）
 4. `main` ブランチに push
 
@@ -179,4 +180,3 @@ Control Panel は Tailscale 内でのみ公開し、`.env` の `CONTROL_PANEL_UR
 - Python 依存関係のインストール
 - Control Panel のビルド
 - バックエンドとフロントエンドの起動
-

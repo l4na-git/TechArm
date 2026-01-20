@@ -12,8 +12,27 @@ echo "📂 Current directory: $PROJECT_DIR"
 
 # 既存のプロセスを停止
 echo "🛑 Stopping existing processes..."
-pkill -f "python -m teacharm.main" || true
-pkill -f "vite" || true
+stop_pid() {
+    local pid_file="$1"
+    local label="$2"
+    if [ -f "$pid_file" ]; then
+        local pid
+        pid="$(cat "$pid_file")"
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            echo "Stopping $label (PID: $pid)..."
+            kill "$pid" || true
+            sleep 1
+            if kill -0 "$pid" 2>/dev/null; then
+                echo "$label did not stop, sending SIGKILL..."
+                kill -9 "$pid" || true
+            fi
+        fi
+        rm -f "$pid_file"
+    fi
+}
+
+stop_pid ".backend.pid" "backend"
+stop_pid ".frontend.pid" "frontend"
 sleep 2
 
 # Python環境のセットアップ
@@ -39,6 +58,7 @@ cd ..
 
 # バックエンドを起動（バックグラウンド）
 echo "🚀 Starting FastAPI backend..."
+mkdir -p logs
 nohup python -m teacharm.main > logs/backend.log 2>&1 &
 echo $! > .backend.pid
 echo "Backend PID: $(cat .backend.pid)"
@@ -46,7 +66,8 @@ echo "Backend PID: $(cat .backend.pid)"
 # Control Panelを起動（バックグラウンド）
 echo "🎨 Starting Control Panel..."
 cd control-panel
-nohup npm run preview > ../logs/frontend.log 2>&1 &
+CONTROL_PANEL_HOST="${CONTROL_PANEL_HOST:-127.0.0.1}"
+nohup npm run preview -- --host "$CONTROL_PANEL_HOST" > ../logs/frontend.log 2>&1 &
 echo $! > ../.frontend.pid
 cd ..
 echo "Frontend PID: $(cat .frontend.pid)"

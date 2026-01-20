@@ -70,34 +70,44 @@ GitHub リポジトリで **Settings > Secrets and variables > Actions** を開�
 | `DEPLOY_USER` | SSH 接続用ユーザー名 | `ubuntu` |
 | `DEPLOY_PATH` | デプロイ先のディレクトリパス | `/home/ubuntu/TechArm` |
 
-#### 環境変数（.env の内容）
+#### 環境変数（6項目のみ！）
 
-`.env.example` を参考に、以下の環境変数を設定します：
+> [!NOTE]
+> **Secretsは機密情報のみ！**
+> 
+> VOICEVOXのパラメータ、ASR設定などの非機密情報は `.env.example` ファイルで管理されます。
+> GitHub Secretsへの登録は不要です。
+
+`.env.example`ファイルで管理されている非機密情報と組み合わせて、以下の**機密情報のみ**をGitHub Secretsとして設定：
+
+**API URL（Tailscale IPを含む）:**
 
 | Secret 名 | 説明 | 例 |
 |----------|------|-----|
-| `ENV_DEEPSEEK_BASE_URL` | DeepSeek API の URL | `http://100.xxx.xxx.xxx:11434` |
-| `ENV_DEEPSEEK_MODEL` | DeepSeek モデル名 | `deepseek-r1:7b` |
-| `ENV_OLLAMA_BASE_URL` | Ollama の URL | `http://100.xxx.xxx.xxx:11434` |
-| `ENV_OLLAMA_MODEL` | Ollama モデル名 | `teacharm-llm` |
+| `ENV_OLLAMA_BASE_URL` | LLM の URL | `http://100.xxx.xxx.xxx:11434` |
 | `ENV_VOICEVOX_BASE_URL` | VOICEVOX の URL | `http://100.xxx.xxx.xxx:50021` |
-| `ENV_VOICEVOX_SPEAKER_NAME` | VOICEVOX 話者名 | `春日部つむぎ` |
-| `ENV_VOICEVOX_STYLE_NAME` | VOICEVOX スタイル名 | `ノーマル` |
-| `ENV_VOICEVOX_SPEED_SCALE` | 話速 | `1.05` |
-| `ENV_VOICEVOX_PITCH_SCALE` | ピッチ | `0.00` |
-| `ENV_VOICEVOX_INTONATION_SCALE` | 抑揚 | `1.10` |
-| `ENV_VOICEVOX_VOLUME_SCALE` | 音量 | `1.00` |
-| `ENV_VOICEVOX_PRE_PHONEME_LENGTH` | 前音素長 | `0.10` |
-| `ENV_VOICEVOX_POST_PHONEME_LENGTH` | 後音素長 | `0.10` |
 | `ENV_VISION_OFFLOAD_URL` | Vision Offload URL（オプション） | `http://100.xxx.xxx.xxx:8000` |
 | `ENV_CONTROL_PANEL_URL` | Control Panel の URL | `http://100.xxx.xxx.xxx:3000` |
-| `ENV_ASR_MODEL` | faster-whisper モデル名 | `base` |
-| `ENV_ASR_LANGUAGE` | ASR 言語 | `ja` |
-| `ENV_ASR_DEVICE` | ASR デバイス | `cpu` |
-| `ENV_ASR_COMPUTE_TYPE` | ASR 計算タイプ | `int8` |
-| `ENV_ASR_BEAM_SIZE` | ASR ビームサイズ | `1` |
+
+**モデル名:**
+
+| Secret 名 | 説明 | 例 |
+|----------|------|-----|
+| `ENV_OLLAMA_MODEL` | LLM モデル名 | `deepseek-r1:7b` |
+
+**デバイス固有情報:**
+
+| Secret 名 | 説明 | 例 |
+|----------|------|-----|
 | `ENV_SO101_PORT` | SO-101 ポート | `/dev/ttyUSB0` |
-| `ENV_SO101_BAUDRATE` | SO-101 ボーレート | `1000000` |
+
+> [!TIP]
+> **非機密情報の変更方法**
+> 
+> VOICEVOXのパラメータやASR設定を変更したい場合:
+> 1. `.env.example` ファイルを編集
+> 2. Git に commit & push
+> 3. 自動的にデプロイされます（Secretsの変更不要！）
 
 ### 4. サーバー側の準備
 

@@ -16,20 +16,11 @@ class Settings(BaseSettings):
     scripts_dir: Path = Field(default=Path("scripts"))
     config_dir: Path = Field(default=Path("config"))
 
-    # Ollama (deprecated - kept for backward compatibility)
+    # LLM (Ollama/DeepSeek)
     ollama_base_url: str = Field(
         default="http://127.0.0.1:11434", env="OLLAMA_BASE_URL"
     )
     ollama_model: str = Field(default="teacharm-llm", env="OLLAMA_MODEL")
-
-
-    # DeepSeek (Text Generation - 自宅サーバー、Tailscale経由)
-    deepseek_base_url: str = Field(
-        default="http://127.0.0.1:11434", env="DEEPSEEK_BASE_URL"
-    )
-    deepseek_model: str = Field(
-        default="deepseek-r1:7b", env="DEEPSEEK_MODEL"
-    )
 
     voicevox_base_url: str = Field(
         default="http://127.0.0.1:50021", env="VOICEVOX_BASE_URL"
