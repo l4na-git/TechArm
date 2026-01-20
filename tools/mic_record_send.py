@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import json
+import tempfile
+from urllib.parse import urljoin
 import wave
 from typing import Optional
 
@@ -36,6 +39,37 @@ def save_wav(path: str, audio: np.ndarray, samplerate: int) -> None:
         wf.setsampwidth(2)
         wf.setframerate(samplerate)
         wf.writeframes(audio_int16.tobytes())
+
+
+def read_wav(path: str) -> tuple[np.ndarray, int]:
+    with wave.open(path, "rb") as wf:
+        channels = wf.getnchannels()
+        sampwidth = wf.getsampwidth()
+        samplerate = wf.getframerate()
+        frames = wf.getnframes()
+        data = wf.readframes(frames)
+
+    if sampwidth == 1:
+        audio = np.frombuffer(data, dtype=np.uint8)
+        audio = (audio.astype(np.float32) - 128.0) / 128.0
+    elif sampwidth == 2:
+        audio = np.frombuffer(data, dtype=np.int16)
+        audio = audio.astype(np.float32) / 32768.0
+    elif sampwidth == 4:
+        audio = np.frombuffer(data, dtype=np.int32)
+        audio = audio.astype(np.float32) / 2147483648.0
+    else:
+        raise ValueError(f"Unsupported sample width: {sampwidth} bytes")
+
+    if channels > 1:
+        audio = audio.reshape(-1, channels)
+    return audio, samplerate
+
+
+def play_audio(path: str) -> None:
+    audio, samplerate = read_wav(path)
+    sd.play(audio, samplerate=samplerate)
+    sd.wait()
 
 
 def main() -> None:
@@ -84,6 +118,11 @@ def main() -> None:
         default="recording.wav",
         help="Output WAV file path.",
     )
+    parser.add_argument(
+        "--play-response",
+        action="store_true",
+        help="Play the synthesized response audio when available.",
+    )
 
     args = parser.parse_args()
 
@@ -110,7 +149,39 @@ def main() -> None:
 
     response = requests.post(args.endpoint, files=files, data=data, timeout=60)
     response.raise_for_status()
-    print(response.text)
+
+    try:
+        payload = response.json()
+    except json.JSONDecodeError:
+        print(response.text)
+        return
+
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    audio_path = payload.get("audio_path")
+    if args.play_response and audio_path:
+        if os.path.exists(audio_path):
+            print(f"Playing: {audio_path}")
+            play_audio(audio_path)
+            return
+
+        filename = os.path.basename(audio_path)
+        endpoint_base = args.endpoint.rsplit("/api/", 1)[0] + "/"
+        audio_url = urljoin(endpoint_base, f"api/tts/audio/{filename}")
+        try:
+            audio_resp = requests.get(audio_url, timeout=30)
+            audio_resp.raise_for_status()
+        except requests.RequestException as exc:
+            print(f"Failed to fetch audio: {exc}")
+            return
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+            tmp.write(audio_resp.content)
+            tmp_path = tmp.name
+
+        print(f"Playing: {audio_url}")
+        play_audio(tmp_path)
+        os.unlink(tmp_path)
 
 
 if __name__ == "__main__":

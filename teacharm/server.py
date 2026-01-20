@@ -609,6 +609,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "audio_path": str(audio_path) if audio_path else None,
         }
 
+    @app.get("/api/tts/audio/{filename}")
+    async def get_tts_audio(filename: str) -> FileResponse:
+        audio_path = Path("cache/tts") / filename
+        if not audio_path.exists():
+            raise HTTPException(status_code=404, detail="Audio not found")
+        return FileResponse(audio_path, media_type="audio/wav")
+
     @app.post("/api/arm/move")
     async def arm_move(payload: ArmMovePayload) -> dict:
         command = ArmCommand(
