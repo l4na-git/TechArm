@@ -15,11 +15,12 @@ dependencies = [
   "opencv-python==4.9.0.80",
   "opencv-contrib-python==4.9.0.80",
   "numpy==1.26.4",
-  "mediapipe==0.10.9",
+  "mediapipe==0.10.31",
   "faster-whisper==1.0.3",
   "sounddevice==0.5.3",
   "pynput==1.7.7",
   "gpiozero==2.0.1",
   "requests>=2.32.5",
   "python-multipart>=0.0.21",
+  "lerobot[feetech]==0.4.2",
 ]

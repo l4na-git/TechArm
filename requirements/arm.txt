@@ -1,0 +1,2 @@
+-r base.txt
+lerobot[feetech]==0.4.2

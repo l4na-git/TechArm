@@ -25,7 +25,7 @@ TeachArmのVision機能は、カメラ入力から以下の処理を行います
 opencv-python==4.9.0.80
 opencv-contrib-python==4.9.0.80
 numpy==1.26.4
-mediapipe==0.10.9
+mediapipe==0.10.31
 ```
 
 ## セットアップ
@@ -34,7 +34,16 @@ mediapipe==0.10.9
 
 ```bash
 # プロジェクトルートで実行
-uv pip install -r requirements.txt
+pip install -r requirements/vision.txt
+
+MediaPipe の `solutions` を使いたい場合は Python 3.10 の venv で
+`requirements/vision-py310.txt` を使う:
+
+```bash
+/opt/homebrew/opt/python@3.10/bin/python3.10 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements/vision-py310.txt
+```
 ```
 
 MediaPipeのインストールには数分かかる場合があります（約45MB）。
@@ -108,7 +117,7 @@ for marker_id in [0, 1, 2, 3]:
 リアルタイムでカメラ映像と検出結果を確認:
 
 ```bash
-uv run python demo_vision.py
+python demo_vision.py
 ```
 
 **デモ画面の機能:**
@@ -141,7 +150,7 @@ Method: mediapipe / color
 
 ```bash
 # Vision機能の単体テスト
-uv run python test_vision.py
+python test_vision.py
 ```
 
 期待される出力:
@@ -178,7 +187,7 @@ uv run python test_vision.py
 #### サーバー起動
 
 ```bash
-uv run python -m teacharm.main
+python -m teacharm.main
 ```
 
 #### API エンドポイント
@@ -240,8 +249,8 @@ ws.onmessage = (event) => {
 **解決策**:
 ```bash
 # MediaPipeを再インストール
-uv pip uninstall mediapipe
-uv pip install mediapipe==0.10.9
+pip uninstall mediapipe
+pip install mediapipe==0.10.31
 ```
 
 **回避策**: `config/camera.yaml` で色ベース検出に切り替え:

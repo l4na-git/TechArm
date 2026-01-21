@@ -7,7 +7,7 @@
 1. **自宅サーバーの準備**
    - Tailscale がインストールされ、ネットワークに接続されていること
    - **Tailscale SSH が有効化されていること**（[設定方法](https://tailscale.com/kb/1193/tailscale-ssh)）
-   - Python 3.11 と uv、Node.js がインストールされていること
+   - Python 3.11 と venv/pip、Node.js がインストールされていること
 
 2. **GitHub リポジトリの準備**
    - このプロジェクトが GitHub にプッシュされていること

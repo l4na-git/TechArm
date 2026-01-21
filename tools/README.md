@@ -229,7 +229,7 @@ cat tools/example_pixel_coordinates.json | \
 
 6. **サーバー再起動して確認**
    ```bash
-   uv run python -m teacharm.main
+   python -m teacharm.main
    # ログで "Loaded material 'MyMaterial'" を確認
    ```
 

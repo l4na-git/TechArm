@@ -39,12 +39,12 @@ sleep 2
 echo "🐍 Setting up Python environment..."
 if [ ! -d ".venv" ]; then
     echo "Creating virtual environment..."
-    UV_PYTHON_PREFERENCE=managed uv venv --python 3.11
+    python3 -m venv .venv
 fi
 
 source .venv/bin/activate
 echo "Installing Python dependencies..."
-uv pip install -r requirements.txt
+pip install -r requirements.txt
 
 # Control Panelのビルド
 echo "⚛️  Building Control Panel..."

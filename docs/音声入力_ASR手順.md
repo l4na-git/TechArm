@@ -18,11 +18,11 @@ ASR_BEAM_SIZE=1
 ```
 
 ## 依存
-- `faster-whisper` を `requirements.txt` に追加済み
+- `faster-whisper` は `requirements/asr.txt` で管理
 - 音声デコードに `ffmpeg` が必要です
 
 ## 起動前準備
-1) `pip install -r requirements.txt`  
+1) `pip install -r requirements/asr.txt`  
 2) `ffmpeg` をインストール（OS標準手順）  
 3) 初回実行時にモデルが未取得の場合は自動取得されます  
    - オフライン運用なら事前にモデルを配置し、`ASR_MODEL` にパスを指定してください

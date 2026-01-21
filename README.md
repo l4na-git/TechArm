@@ -43,15 +43,20 @@ TeachArm の対話システムは、**ルールベースルーティング** と
 
 ## クイックスタート（サーバ側）
 
-TeachArm サーバは Python 3.11 + [uv](https://github.com/astral-sh/uv) を推奨。Python バージョンは `pyproject.toml` の `requires-python` に固定している。
+TeachArm サーバは Python 3.11 + venv/pip を推奨。Python バージョンは `pyproject.toml` の `requires-python` に固定している。
 
 ```bash
-UV_PYTHON_PREFERENCE=managed uv venv --python 3.11
+# 実行場所: 開発PC / Raspberry Pi
+python -m venv .venv
 source .venv/bin/activate
-uv pip install -r requirements.txt
+pip install -r requirements.txt
+# SO-101 実機用は別環境で: pip install -r requirements/arm.txt
 cp .env.example .env  # Tailscale IP などを実値で記入
 python -m teacharm.main
 ```
+
+MediaPipe の `solutions` が必要な場合は Python 3.10 の venv で
+`requirements/vision-py310.txt` を使う。
 
 デフォルトで `http://0.0.0.0:8000` で待ち受けます。主なエンドポイント：
 
@@ -87,9 +92,9 @@ python tools/generate_aruco_markers.py
 # システム環境設定 > セキュリティとプライバシー > カメラ
 
 # 4. インタラクティブデモ（プレビュー付き）
-uv run python demo_vision.py
+python demo_vision.py
 # または基本テスト
-uv run python test_vision.py
+python test_vision.py
 ```
 
 デモ画面では:
@@ -115,12 +120,20 @@ uv run python test_vision.py
 - `config/voicevox_params.yaml`：VOICEVOX の話速/抑揚などを調整（必要に応じて）。
 - `config/camera.yaml`：カメラ解像度、MediaPipe設定などを調整（デフォルトで動作）。
 
+### SO-101 セットアップ
+
+SO-101 の接続・キャリブレーション手順は [SO-101セットアップガイド](docs/SO-101セットアップガイド.md) を参照してください。
+関節角操作は `scripts/move_arm.py` から実行できます。macOS で `lerobot[feetech]` と `faster-whisper` が衝突する場合は、
+SO-101 専用の仮想環境に分けて運用します。
+ガイド内の「ターミナルの指示」は `lerobot-setup-motors` などの CLI 出力を指します。
+URDF は SO-ARM100 の `Simulation/SO101/so101_new_calib.urdf` を参照しています（https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf）。
+
 ### 実装状況
 
 - ✅ **Dialogue/Router/DeepSeek**: 完全実装済み
 - ✅ **Vision (Camera + MediaPipe Hands)**: 完全実装済み
 - ✅ **TTS (VOICEVOX)**: スタブ実装（外部サーバー接続対応）
-- ⚠️ **Arm (SO-101)**: スタブ実装（実機接続は未実装）
+- ⚠️ **Arm (SO-101)**: 関節角制御は実装済み（LeRobot/Feetech SDK が必要、IK は未実装）
 
 実機（カメラ、SO-101アーム）が揃い次第、該当サービスを有効化できます。
 

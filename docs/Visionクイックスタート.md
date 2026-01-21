@@ -6,7 +6,16 @@
 
 ```bash
 cd /path/to/TechArm
-uv pip install -r requirements.txt
+pip install -r requirements/vision.txt
+
+MediaPipe の `solutions` を使いたい場合は Python 3.10 の venv で
+`requirements/vision-py310.txt` を使う:
+
+```bash
+/opt/homebrew/opt/python@3.10/bin/python3.10 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements/vision-py310.txt
+```
 ```
 
 > ⏱️ MediaPipeのインストールに数分かかります（約45MB）
@@ -82,7 +91,7 @@ hand_detection:
 サーバーを起動してWebSocket経由で使用:
 
 ```bash
-uv run python -m teacharm.main
+python -m teacharm.main
 
 # 別ターミナルで
 curl -X POST http://localhost:8000/api/vision/start

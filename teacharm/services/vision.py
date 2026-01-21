@@ -21,11 +21,14 @@ logger = get_logger(__name__)
 try:
     import mediapipe as mp
 
+    if not hasattr(mp, "solutions"):
+        raise ImportError("MediaPipe solutions API not available")
     MEDIAPIPE_AVAILABLE = True
-except ImportError:
+except ImportError as exc:
     MEDIAPIPE_AVAILABLE = False
     logger.warning(
-        "MediaPipe not available, falling back to color-based detection"
+        "MediaPipe not available (%s), falling back to color-based detection",
+        exc,
     )
 
 

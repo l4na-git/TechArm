@@ -32,7 +32,7 @@ PDF → pymupdf → {material_id}_text.json → Material.full_text
 
 ```bash
 # pymupdfがインストールされているか確認
-uv pip install pymupdf
+pip install pymupdf
 
 # Material Aのテキストを抽出
 python tools/extract_pdf_text.py materials/material_A.json

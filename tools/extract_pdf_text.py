@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 try:
     import pymupdf  # PyMuPDF
 except ImportError:
-    print("Error: pymupdf not installed. Install with: uv pip install pymupdf")
+    print("Error: pymupdf not installed. Install with: pip install pymupdf")
     exit(1)
 
 

@@ -6,7 +6,7 @@
 
 ```bash
 cd /path/to/TechArm
-uv run python tools/generate_aruco_markers.py
+python tools/generate_aruco_markers.py
 ```
 
 生成されたマーカーは `aruco_markers/` フォルダに保存されます。
@@ -81,7 +81,7 @@ uv run python tools/generate_aruco_markers.py
 
 ```bash
 cd /path/to/TechArm
-uv run python demo_vision.py
+python demo_vision.py
 ```
 
 ### 画面の見方
@@ -184,8 +184,16 @@ Frame: 123
 **MediaPipe関連のエラー:**
 ```bash
 # MediaPipeを再インストール
-uv pip uninstall mediapipe
-uv pip install mediapipe==0.10.9
+pip uninstall mediapipe
+pip install mediapipe==0.10.31
+
+MediaPipe の `solutions` が必要な場合は Python 3.10 の venv を使う:
+
+```bash
+/opt/homebrew/opt/python@3.10/bin/python3.10 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements/vision-py310.txt
+```
 ```
 
 **カメラアクセスエラー:**
@@ -208,7 +216,7 @@ uv pip install mediapipe==0.10.9
 セットアップが完了したら：
 
 1. **`s`キーでスクリーンショット**を保存して動作記録
-2. **サーバーモードで使用**: `uv run python -m teacharm.main`
+2. **サーバーモードで使用**: `python -m teacharm.main`
 3. **WebSocket接続**: Control Panelからリアルタイム監視
 
 詳細は [Vision機能ガイド](./Vision機能ガイド.md) を参照してください。
