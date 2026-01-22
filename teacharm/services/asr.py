@@ -6,7 +6,10 @@ import asyncio
 from dataclasses import dataclass
 from typing import List, Optional
 
-from faster_whisper import WhisperModel
+try:
+    from faster_whisper import WhisperModel
+except ImportError:  # optional dependency
+    WhisperModel = None
 
 from ..config import Settings
 from ..logger import get_logger
@@ -40,6 +43,11 @@ class ASRService:
         self._model: Optional[WhisperModel] = None
 
     def _get_model(self) -> WhisperModel:
+        if WhisperModel is None:
+            raise RuntimeError(
+                "faster-whisper is not installed. "
+                "Install it in the current environment to use ASR."
+            )
         if self._model is None:
             logger.info(
                 "Loading ASR model %s (device=%s, compute=%s)",
