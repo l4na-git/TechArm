@@ -21,6 +21,7 @@ export function VisionPanel({ apiUrl }: VisionPanelProps) {
   const [isActive, setIsActive] = useState(false);
   const [isCalibrated, setIsCalibrated] = useState(false);
   const [visionFrame, setVisionFrame] = useState<VisionFrame | null>(null);
+  const [lastImage, setLastImage] = useState<string | null>(null);
   const [fps, setFps] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
   const frameCountRef = useRef(0);
@@ -126,6 +127,9 @@ export function VisionPanel({ apiUrl }: VisionPanelProps) {
         
         setVisionFrame(frame);
         setIsCalibrated(frame.is_calibrated);
+        if (frame.image) {
+          setLastImage(frame.image);
+        }
         frameCountRef.current++;
       } catch (error) {
         console.error("[Vision] Failed to parse vision frame:", error);
@@ -172,15 +176,17 @@ export function VisionPanel({ apiUrl }: VisionPanelProps) {
 
       {isActive && (
         <div className="vision-status">
-          {visionFrame?.image && (
-            <div className="vision-preview">
+          <div className="vision-preview">
+            {lastImage ? (
               <img
-                src={`data:image/jpeg;base64,${visionFrame.image}`}
+                src={`data:image/jpeg;base64,${lastImage}`}
                 alt="Camera preview"
                 className="preview-image"
               />
-            </div>
-          )}
+            ) : (
+              <div className="preview-placeholder">Waiting for camera frames...</div>
+            )}
+          </div>
 
           <div className="status-grid">
             <div className="status-item">
@@ -376,7 +382,17 @@ export function VisionPanel({ apiUrl }: VisionPanelProps) {
 
         .vision-hint.success {
           background: #d4edda;
-         vision-preview {
+          color: #155724;
+          border-left: 4px solid #28a745;
+        }
+
+        .vision-hint.info {
+          background: #d1ecf1;
+          border-left: 4px solid #17a2b8;
+          color: #0c5460;
+        }
+
+        .vision-preview {
           margin-bottom: 1rem;
           border-radius: 6px;
           overflow: hidden;
@@ -389,14 +405,12 @@ export function VisionPanel({ apiUrl }: VisionPanelProps) {
           display: block;
         }
 
-        . border-left: 4px solid #28a745;
-          color: #155724;
-        }
-
-        .vision-hint.info {
-          background: #d1ecf1;
-          border-left: 4px solid #17a2b8;
-          color: #0c5460;
+        .preview-placeholder {
+          padding: 1.5rem;
+          text-align: center;
+          color: #f8f9fa;
+          background: #1f1f1f;
+          font-size: 0.95rem;
         }
 
         .btn-primary,
