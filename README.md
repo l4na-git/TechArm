@@ -125,6 +125,14 @@ python test_vision.py
 SO-101 の接続・キャリブレーション手順は [SO-101セットアップガイド](docs/SO-101セットアップガイド.md) を参照してください。
 関節角操作は `scripts/move_arm.py` から実行できます。macOS で `lerobot[feetech]` と `faster-whisper` が衝突する場合は、
 SO-101 専用の仮想環境に分けて運用します。
+
+```bash
+python3.11 -m venv .venv-so101
+source .venv-so101/bin/activate
+pip install -r requirements/arm.txt
+python scripts/move_arm.py --status
+```
+
 ガイド内の「ターミナルの指示」は `lerobot-setup-motors` などの CLI 出力を指します。
 URDF は SO-ARM100 の `Simulation/SO101/so101_new_calib.urdf` を参照しています（https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf）。
 
