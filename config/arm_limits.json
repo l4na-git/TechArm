@@ -4,12 +4,12 @@
   "motor_config": {
     "baudrate": 1000000,
     "joints": [
-      {"id": 1, "name": "shoulder_pan", "gear_ratio": "1/191", "min_deg": null, "max_deg": null},
-      {"id": 2, "name": "shoulder_lift", "gear_ratio": "1/345", "min_deg": null, "max_deg": null},
-      {"id": 3, "name": "elbow_flex", "gear_ratio": "1/191", "min_deg": null, "max_deg": null},
-      {"id": 4, "name": "wrist_flex", "gear_ratio": "1/147", "min_deg": null, "max_deg": null},
-      {"id": 5, "name": "wrist_roll", "gear_ratio": "1/147", "min_deg": null, "max_deg": null},
-      {"id": 6, "name": "gripper", "gear_ratio": "1/147", "min_deg": null, "max_deg": null}
+      {"id": 1, "name": "shoulder_pan", "gear_ratio": "1/191", "min_deg": -134.82421875, "max_deg": 53.61328125},
+      {"id": 2, "name": "shoulder_lift", "gear_ratio": "1/345", "min_deg": -133.505859375, "max_deg": 77.255859375},
+      {"id": 3, "name": "elbow_flex", "gear_ratio": "1/191", "min_deg": -94.833984375, "max_deg": 100.283203125},
+      {"id": 4, "name": "wrist_flex", "gear_ratio": "1/147", "min_deg": -87.275390625, "max_deg": 117.24609375},
+      {"id": 5, "name": "wrist_roll", "gear_ratio": "1/147", "min_deg": 37.6171875, "max_deg": 352.880859375},
+      {"id": 6, "name": "gripper", "gear_ratio": "1/147", "min_deg": -68.90625, "max_deg": 62.490234375}
     ]
   },
   "workspace_xyz": {
@@ -29,7 +29,7 @@
   "safe_pose": {
     "_comment": "Safe initial pose - joint angles in degrees [j1, j2, j3, j4, j5, j6]",
     "type": "joint_angles",
-    "angles": [0.0, 45.0, -45.0, 0.0, 0.0, 0.0],
+    "angles": [-9.1428571429, -104.967032967, 97.4505494505, 74.4615384615, -9.5384615385, 2.3041474654],
     "_legacy_xyz": {"x": null, "y": null, "z": null}
   }
 }

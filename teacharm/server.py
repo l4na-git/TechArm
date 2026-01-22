@@ -112,7 +112,11 @@ class TeachArmContext:
         self.asr = ASRService(settings)
         self.tts = VoiceVoxService(settings)
         arm_limits = self._load_json(settings.config_dir / "arm_limits.json")
-        self.arm = ArmService(arm_limits)
+        self.arm = ArmService(
+            arm_limits,
+            port=settings.so101_port,
+            baudrate=settings.so101_baudrate,
+        )
         self.vision = VisionService(settings)
         self.calibration_path = settings.config_dir / "arm_calibration.json"
         self.calibration = self._load_json(self.calibration_path)
