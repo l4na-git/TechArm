@@ -72,6 +72,25 @@ hand_detection:
   max_jump_threshold: 40  # 外れ値除去の閾値(px)
 ```
 
+解像度は**実カメラのフレームサイズと一致**させてください。
+一致しない場合、座標が `(1.000, 1.000)` 付近に張り付くことがあります。
+
+#### 解像度の確認（macOS例）
+```bash
+.venv/bin/python - <<'PY'
+import cv2
+cap = cv2.VideoCapture(0)
+ret, frame = cap.read()
+print("cap props:", int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+if ret:
+    h, w = frame.shape[:2]
+    print("frame shape:", w, h)
+cap.release()
+PY
+```
+
+出力の `frame shape` を `config/camera.yaml` の `resolution` に反映します。
+
 ### 3. カメラアクセス権限 (macOS)
 
 初回実行時、macOSがカメラアクセスを要求します:
