@@ -60,6 +60,11 @@ python tools/mic_record_send_keyboard.py --key space --play-response
 python tools/mic_record_send_gpio.py --pin 17 --pull-up
 ```
 
+### 押すたびに録音開始/停止（Macメディアキー）
+```bash
+python tools/mic_record_send_media_key_mac.py --media-key play --mode toggle
+```
+
 ## 速度調整の目安
 重い場合は以下を下げてください:
 - `ASR_MODEL=tiny`（最軽量）
