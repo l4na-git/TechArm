@@ -197,7 +197,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         ON_POINT_COOLDOWN = 3.0
         last_trigger_region_id: Optional[str] = None
         last_trigger_time = 0.0
-        OFFLOAD_SCALE = 0.5
+        OFFLOAD_SCALE = 1.0
         OFFLOAD_JPEG_QUALITY = 50
 
         try:
