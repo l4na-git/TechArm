@@ -40,6 +40,12 @@ class VisionFrame(BaseModel):
     markers_corners: Dict[int, List[List[float]]]
     is_calibrated: bool
     hand_detected: bool
+    fingertip_x: Optional[float] = None
+    fingertip_y: Optional[float] = None
+    fingertip_raw_u: Optional[float] = None
+    fingertip_raw_v: Optional[float] = None
+    fingertip_warped_u: Optional[float] = None
+    fingertip_warped_v: Optional[float] = None
     fingertip_u: Optional[float] = None
     fingertip_v: Optional[float] = None
     # Material mapping fields (populated by server)
@@ -973,6 +979,12 @@ class VisionService:
         hand_detected = False
         fingertip_u = None
         fingertip_v = None
+        fingertip_x = None
+        fingertip_y = None
+        raw_u = None
+        raw_v = None
+        warped_u = None
+        warped_v = None
 
         interval = max(1, int(self.config.hand_detection_interval))
         self._hand_detection_counter = (self._hand_detection_counter + 1) % interval
@@ -985,8 +997,23 @@ class VisionService:
 
         if smoothed is not None:
             hand_detected = True
+            fingertip_x, fingertip_y = smoothed
+            raw_u = float(fingertip_x) / self.config.width
+            raw_v = float(fingertip_y) / self.config.height
+            if self.perspective_matrix is not None:
+                try:
+                    point = np.array(
+                        [[[float(fingertip_x), float(fingertip_y)]]],
+                        dtype=np.float32,
+                    )
+                    warped = cv2.perspectiveTransform(point, self.perspective_matrix)
+                    warped_x, warped_y = warped[0][0]
+                    warped_u = float(warped_x) / self.config.width
+                    warped_v = float(warped_y) / self.config.height
+                except Exception as e:
+                    logger.warning("Failed to warp point for debug: %s", e)
             fingertip_u, fingertip_v = self.pixel_to_normalized(
-                int(smoothed[0]), int(smoothed[1])
+                int(fingertip_x), int(fingertip_y)
             )
 
         # Draw visualizations on original frame BEFORE warping
@@ -1085,6 +1112,12 @@ class VisionService:
             markers_corners=serializable_corners,
             is_calibrated=is_calibrated,
             hand_detected=hand_detected,
+            fingertip_x=fingertip_x,
+            fingertip_y=fingertip_y,
+            fingertip_raw_u=raw_u,
+            fingertip_raw_v=raw_v,
+            fingertip_warped_u=warped_u,
+            fingertip_warped_v=warped_v,
             fingertip_u=fingertip_u,
             fingertip_v=fingertip_v,
         )
