@@ -3,7 +3,7 @@
 # Camera device settings
 device:
   # Camera device path (0 for default camera, or /dev/video0 for specific device)
-  index: 0
+  index: 1
   # Alternative: use device path on Linux
   # path: "/dev/video0"
   # Flip image if the camera feed is mirrored or upside down
@@ -37,7 +37,7 @@ aruco:
   # Auto-order markers by position to handle mirrored/rotated camera feeds
   auto_order_by_position: true
   # Calibration point selection: inner | center | outer
-  corner_mode: "outer"
+  corner_mode: "inner"
   # Marker size in meters (for pose estimation, if needed)
   marker_size: 0.05
 
