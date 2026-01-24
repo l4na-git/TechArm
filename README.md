@@ -55,8 +55,8 @@ cp .env.example .env  # Tailscale IP などを実値で記入
 python -m teacharm.main
 ```
 
-MediaPipe の `solutions` が必要な場合は Python 3.10 の venv で
-`requirements/vision-py310.txt` を使う。
+MediaPipe の `solutions` が必要な場合は `.venv` を Python 3.10 で作成し、
+`.venv` に `requirements/vision-py310.txt` をインストールする。
 
 デフォルトで `http://0.0.0.0:8000` で待ち受けます。主なエンドポイント：
 
