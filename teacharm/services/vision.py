@@ -453,13 +453,20 @@ class VisionService:
         return corners[int(np.argmax(distances))]
 
     def _select_calibration_point(
-        self, corners: np.ndarray, quad_center: np.ndarray
+        self,
+        corners: np.ndarray,
+        quad_center: np.ndarray,
+        marker_index: Optional[int] = None,
     ) -> np.ndarray:
         mode = (self.config.corner_mode or "inner").lower()
         if mode == "center":
             return np.mean(corners, axis=0)
         if mode == "outer":
             return self._outer_corner(corners, quad_center)
+        if marker_index is not None:
+            corner_indices = [2, 3, 0, 1]  # TL, TR, BR, BL -> inner corners
+            if 0 <= marker_index < len(corner_indices):
+                return corners[corner_indices[marker_index]]
         return self._inner_corner(corners, quad_center)
 
     def calibrate_perspective(
@@ -507,7 +514,14 @@ class VisionService:
                 for ci, corner in enumerate(corners):
                     logger.debug(f"  Corner {ci}: ({corner[0]:.1f}, {corner[1]:.1f})")
 
-                point = self._select_calibration_point(corners, quad_center)
+                marker_index = (
+                    required_ids.index(marker_id)
+                    if marker_id in required_ids
+                    else None
+                )
+                point = self._select_calibration_point(
+                    corners, quad_center, marker_index=marker_index
+                )
                 src_points.append(point)
                 logger.debug(
                     "  Using %s point: (%.1f, %.1f)",
@@ -994,9 +1008,9 @@ class VisionService:
                 ordered = self._order_markers_by_position(entries_by_id)
                 outer_corners = []
                 quad_center = np.mean([entry[2] for entry in ordered], axis=0)
-                for _, corners, _ in ordered:
+                for idx, (_, corners, _) in enumerate(ordered):
                     point = self._select_calibration_point(
-                        corners, quad_center
+                        corners, quad_center, marker_index=idx
                     ).astype(np.int32)
                     outer_corners.append(point)
                 
