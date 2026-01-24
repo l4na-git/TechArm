@@ -6,6 +6,9 @@ device:
   index: 0
   # Alternative: use device path on Linux
   # path: "/dev/video0"
+  # Flip image if the camera feed is mirrored or upside down
+  flip_horizontal: false
+  flip_vertical: false
 
 # Resolution settings
 resolution:
