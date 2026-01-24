@@ -40,6 +40,7 @@ class VisionFrame(BaseModel):
     markers_corners: Dict[int, List[List[float]]]
     is_calibrated: bool
     hand_detected: bool
+    hand_source: Optional[str] = None
     fingertip_x: Optional[float] = None
     fingertip_y: Optional[float] = None
     fingertip_raw_u: Optional[float] = None
@@ -74,6 +75,7 @@ class CameraConfig(BaseModel):
     auto_order_by_position: bool = True
     corner_mode: str = "inner"  # inner | center | outer
     hand_detection_method: str = "mediapipe"  # mediapipe or color
+    hand_detection_fallback: bool = True
     mediapipe_confidence: float = 0.5
     mediapipe_model_complexity: int = 0  # 0 or 1
     hand_detection_interval: int = 8  # Run hand detection every N frames
@@ -108,6 +110,7 @@ class VisionService:
         self._running = False
         self._hand_detection_counter = 0
         self._last_hand_px: Optional[Tuple[int, int]] = None
+        self.last_hand_source: Optional[str] = None
         
         # Calibration stability tracking
         self.calibration_buffer: deque = deque(maxlen=10)
@@ -187,6 +190,7 @@ class VisionService:
                 ),
                 corner_mode=aruco_cfg.get("corner_mode", "inner"),
                 hand_detection_method=hand_cfg.get("method", "mediapipe"),
+                hand_detection_fallback=hand_cfg.get("fallback", True),
                 mediapipe_confidence=hand_cfg.get(
                     "confidence_threshold", 0.5
                 ),
@@ -836,10 +840,16 @@ class VisionService:
         ):
             result = self.detect_hand_mediapipe(frame)
             if result is not None:
+                self.last_hand_source = "mediapipe"
                 return result
+            if not self.config.hand_detection_fallback:
+                self.last_hand_source = "none"
+                return None
             # Fall through to color-based if MediaPipe fails
         
-        return self.detect_hand_color_based(frame)
+        result = self.detect_hand_color_based(frame)
+        self.last_hand_source = "color" if result is not None else "none"
+        return result
 
     def smooth_fingertip(
         self, current: Optional[Tuple[int, int]]
@@ -1112,6 +1122,7 @@ class VisionService:
             markers_corners=serializable_corners,
             is_calibrated=is_calibrated,
             hand_detected=hand_detected,
+            hand_source=self.last_hand_source,
             fingertip_x=fingertip_x,
             fingertip_y=fingertip_y,
             fingertip_raw_u=raw_u,
