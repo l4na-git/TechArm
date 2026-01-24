@@ -12,8 +12,8 @@ device:
 
 # Resolution settings
 resolution:
-  width: 1280
-  height: 720
+  width: 960
+  height: 540
 
 # Camera parameters (OpenCV VideoCapture properties)
 parameters:
@@ -49,9 +49,13 @@ hand_detection:
   # MediaPipe model complexity: 0 (lite) or 1 (full)
   # 0 is faster and suitable for most cases
   model_complexity: 0
+  # Run hand detection every N frames (lower = more responsive)
+  interval: 1
+  # Downscale factor for hand detection (1.0 = no downscale)
+  scale: 1.0
   # Moving average window size for fingertip smoothing
   # Lower = more responsive, higher = smoother
-  smoothing_window: 3
+  smoothing_window: 1
   # Maximum jump distance in pixels to reject outliers
   # Set to ~15% of frame width for 1280x720 (200px)
   max_jump_threshold: 200
