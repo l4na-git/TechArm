@@ -159,6 +159,26 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             trimmed = "wss://" + trimmed[len("https://"):]
         return f"{trimmed}/ws/vision_offload"
 
+    def _update_vision_state(
+        vision_frame: VisionFrame,
+        current_region_id: Optional[str],
+        current_material_id: Optional[str],
+    ) -> None:
+        ctx.state.vision_last_update = vision_frame.timestamp
+        ctx.state.vision_material_visible = (
+            len(vision_frame.markers_detected) >= 4
+        )
+        ctx.state.vision_hand_detected = vision_frame.hand_detected
+        if vision_frame.hand_detected and vision_frame.fingertip_u is not None:
+            ctx.state.vision_pointer = {
+                "x": vision_frame.fingertip_u,
+                "y": vision_frame.fingertip_v,
+            }
+        else:
+            ctx.state.vision_pointer = None
+        ctx.state.vision_current_region = current_region_id
+        ctx.state.vision_current_material = current_material_id
+
     async def _websocket_vision_offload_proxy(websocket: WebSocket) -> None:
         offload_url = ctx.settings.vision_offload_url
         if not offload_url:
@@ -296,6 +316,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     data["current_material_id"] = current_material_id
                     data["image"] = image
                     data["dwell_frames"] = region_dwell_frames
+                    _update_vision_state(
+                        vision_frame, current_region_id, current_material_id
+                    )
                     await websocket.send_json(data)
 
                     # Send at ~10fps
@@ -577,16 +600,27 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 status_code=400, detail="No material selected"
             )
         current_region = None
-        if ctx.state.last_region:
-            current_region = current_material.get_region(
-                ctx.state.last_region
-            )
+        pointer_coords = None
+        material_visible = False
+        current_region_id = None
+        vision_ts = ctx.state.vision_last_update or 0.0
+        if time.time() - vision_ts <= 2.5:
+            material_visible = ctx.state.vision_material_visible
+            if ctx.state.vision_current_material == ctx.state.active_material:
+                current_region_id = ctx.state.vision_current_region
+            pointer_coords = ctx.state.vision_pointer
+        if current_region_id:
+            current_region = current_material.get_region(current_region_id)
 
         dialogue_resp = await ctx.dialogue.on_text(
             user_text=asr_result.text,
             material_id=ctx.state.active_material,
             current_region=current_region,
             state="IDLE" if not current_region else "TARGET_SELECTED",
+            require_pointing=True,
+            material_visible=material_visible,
+            pointer_coords=pointer_coords,
+            prepend_point_ack=True,
         )
 
         audio_path = None
@@ -836,6 +870,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     # Add mapping info to frame
                     vision_frame.current_region_id = current_region_id
                     vision_frame.current_material_id = current_material_id
+                    _update_vision_state(
+                        vision_frame, current_region_id, current_material_id
+                    )
                     
                     # Get current frame for preview
                     preview_frame = ctx.vision.get_preview_frame()
@@ -910,6 +947,26 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 )
                 if vision_frame is None:
                     continue
+
+                current_region_id = None
+                current_material_id = None
+                if (
+                    vision_frame.hand_detected
+                    and vision_frame.fingertip_u is not None
+                ):
+                    mapping = ctx.repository.map_point(
+                        vision_frame.fingertip_u,
+                        vision_frame.fingertip_v,
+                    )
+                    if mapping.region:
+                        current_region_id = mapping.region.id
+                        current_material_id = mapping.material_id
+
+                vision_frame.current_region_id = current_region_id
+                vision_frame.current_material_id = current_material_id
+                _update_vision_state(
+                    vision_frame, current_region_id, current_material_id
+                )
 
                 preview_frame = ctx.vision.get_preview_frame()
                 preview_frame_count += 1

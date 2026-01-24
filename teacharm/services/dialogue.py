@@ -111,6 +111,10 @@ class DialogueService:
         material_id: Optional[str] = None,
         current_region: Optional[Region] = None,
         state: str = "IDLE",
+        require_pointing: bool = False,
+        material_visible: Optional[bool] = None,
+        pointer_coords: Optional[Dict[str, float]] = None,
+        prepend_point_ack: bool = False,
     ) -> DialogueResponse:
         """Handle user text input through Router."""
         text = user_text.strip()
@@ -138,6 +142,8 @@ class DialogueService:
             candidates=self._build_candidates(
                 [current_region] if current_region else []
             ),
+            require_pointing=require_pointing,
+            material_visible=material_visible,
         )
 
         # Call router
@@ -149,13 +155,48 @@ class DialogueService:
         if action == "respond_script" and current_region:
             mode = args.get("mode", "point")
             script_event = "on_help" if mode == "help" else "on_point"
-            return await self._respond_from_script(
-                current_region, script_event, router_output
+            response = await self._respond_from_script(
+                current_region,
+                script_event,
+                router_output,
+                pointer_coords=pointer_coords,
+                user_speech=text,
             )
+            if prepend_point_ack:
+                self._prepend_point_ack(response, current_region)
+            return response
         elif action == "generate_explanation" and current_region:
             style = args.get("style", "hint")
-            return await self._generate_with_deepseek(
-                current_region, material_id or "", style, router_output
+            response = await self._generate_with_deepseek(
+                current_region,
+                material_id or "",
+                style,
+                router_output,
+                pointer_coords=pointer_coords,
+                user_speech=text,
+            )
+            if prepend_point_ack:
+                self._prepend_point_ack(response, current_region)
+            return response
+        elif action == "material_not_visible":
+            message = "ごめんね。教材が見えないよ。教材を写してね"
+            return DialogueResponse(
+                text=message,
+                commands=[{"SAY": message}],
+                source="router",
+                router_action=action,
+                router_fallback=router_output.fallback_used,
+            )
+        elif action == "pointing_unknown":
+            message = (
+                "ごめんね。どこを指しているか分からなかったよ。もう一度教えて"
+            )
+            return DialogueResponse(
+                text=message,
+                commands=[{"SAY": message}],
+                source="router",
+                router_action=action,
+                router_fallback=router_output.fallback_used,
             )
         elif action == "repeat_last":
             return self._repeat_last(router_output)
@@ -182,20 +223,35 @@ class DialogueService:
             )
 
     async def _respond_from_script(
-        self, region: Region, event: str, router_output: Any
+        self,
+        region: Region,
+        event: str,
+        router_output: Any,
+        pointer_coords: Optional[Dict[str, float]] = None,
+        user_speech: Optional[str] = None,
     ) -> DialogueResponse:
         """Generate response from region script."""
         script = getattr(region, "script", None)
         if not script:
             # No script available, generate with DeepSeek
             return await self._generate_with_deepseek(
-                region, "", "hint", router_output
+                region,
+                "",
+                "hint",
+                router_output,
+                pointer_coords=pointer_coords,
+                user_speech=user_speech,
             )
 
         command_names = script.get(event, [])
         if not command_names:
             return await self._generate_with_deepseek(
-                region, "", "hint", router_output
+                region,
+                "",
+                "hint",
+                router_output,
+                pointer_coords=pointer_coords,
+                user_speech=user_speech,
             )
 
         response = await self._run_commands(command_names, "script")
@@ -211,10 +267,16 @@ class DialogueService:
         material_id: str,
         style: str,
         router_output: Any,
+        pointer_coords: Optional[Dict[str, float]] = None,
+        user_speech: Optional[str] = None,
     ) -> DialogueResponse:
         """Generate explanation using DeepSeek."""
         result = await self._deepseek.generate_explanation(
-            region, material_id, style
+            region,
+            material_id,
+            style,
+            pointer_coords=pointer_coords,
+            user_speech=user_speech,
         )
 
         response = DialogueResponse(
@@ -228,6 +290,17 @@ class DialogueService:
         self._last_response = response
         self._last_region_id = region.id
         return response
+
+    def _prepend_point_ack(
+        self, response: DialogueResponse, region: Region
+    ) -> None:
+        """Prefix response with a pointing acknowledgement."""
+        if not response.text:
+            return
+        label = region.label or region.id
+        ack = f"{label}の問題だね。"
+        response.text = f"{ack} {response.text}".strip()
+        response.commands = [{"SAY": ack}] + response.commands
 
     def _repeat_last(self, router_output: Any) -> DialogueResponse:
         """Repeat the last response."""

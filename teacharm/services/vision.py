@@ -63,6 +63,7 @@ class CameraConfig(BaseModel):
     aruco_dict: str = "DICT_4X4_50"
     marker_ids: List[int] = [0, 1, 2, 3]
     marker_size: float = 0.05
+    auto_order_by_position: bool = True
     hand_detection_method: str = "mediapipe"  # mediapipe or color
     mediapipe_confidence: float = 0.5
     mediapipe_model_complexity: int = 0  # 0 or 1
@@ -170,6 +171,9 @@ class VisionService:
                 aruco_dict=aruco_cfg.get("dictionary", "DICT_4X4_50"),
                 marker_ids=aruco_cfg.get("marker_ids", [0, 1, 2, 3]),
                 marker_size=aruco_cfg.get("marker_size", 0.05),
+                auto_order_by_position=aruco_cfg.get(
+                    "auto_order_by_position", True
+                ),
                 hand_detection_method=hand_cfg.get("method", "mediapipe"),
                 mediapipe_confidence=hand_cfg.get(
                     "confidence_threshold", 0.5
@@ -265,6 +269,30 @@ class VisionService:
                 "Some camera parameters not supported on this platform: %s",
                 e,
             )
+        self._refresh_camera_properties()
+
+    def _refresh_camera_properties(self) -> None:
+        """Sync config with actual camera properties."""
+        if self.cap is None:
+            return
+        actual_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if (
+            actual_width > 0
+            and actual_height > 0
+            and (actual_width != self.config.width
+                 or actual_height != self.config.height)
+        ):
+            logger.warning(
+                "Camera resolution differs from config (%dx%d -> %dx%d), updating",
+                self.config.width,
+                self.config.height,
+                actual_width,
+                actual_height,
+            )
+            self.config.width = actual_width
+            self.config.height = actual_height
+            self.reset_calibration()
 
     def stop(self) -> None:
         """Stop camera capture and cleanup resources."""
@@ -315,22 +343,13 @@ class VisionService:
         return marker_ids, marker_corners
 
     def _validate_marker_layout(
-        self, marker_corners: Dict[int, np.ndarray]
+        self, centers: List[np.ndarray]
     ) -> Tuple[bool, str]:
         """
         Validate that markers form a reasonable quadrilateral.
         
         Returns (is_valid, error_message)
         """
-        required_ids = self.config.marker_ids[:4]
-        
-        # Get marker centers
-        centers = []
-        for marker_id in required_ids:
-            corners = marker_corners[marker_id]
-            center = np.mean(corners, axis=0)
-            centers.append(center)
-        
         # Check if markers form a convex quadrilateral
         # Calculate cross products to check convexity
         def cross_product_sign(p1, p2, p3):
@@ -383,6 +402,41 @@ class VisionService:
         
         return True, "OK"
 
+    def _order_markers(
+        self, marker_corners: Dict[int, np.ndarray], required_ids: List[int]
+    ) -> Optional[List[Tuple[int, np.ndarray, np.ndarray]]]:
+        if not all(mid in marker_corners for mid in required_ids):
+            return None
+        entries: List[Tuple[int, np.ndarray, np.ndarray]] = []
+        for marker_id in required_ids:
+            corners = marker_corners[marker_id]
+            center = np.mean(corners, axis=0)
+            entries.append((marker_id, corners, center))
+        if not self.config.auto_order_by_position:
+            return entries
+        sums = [entry[2][0] + entry[2][1] for entry in entries]
+        diffs = [entry[2][0] - entry[2][1] for entry in entries]
+        tl = entries[int(np.argmin(sums))]
+        br = entries[int(np.argmax(sums))]
+        tr = entries[int(np.argmax(diffs))]
+        bl = entries[int(np.argmin(diffs))]
+        ordered = [tl, tr, br, bl]
+        if len({id(entry) for entry in ordered}) < 4:
+            entries_sorted = sorted(
+                entries, key=lambda item: (item[2][1], item[2][0])
+            )
+            top = sorted(entries_sorted[:2], key=lambda item: item[2][0])
+            bottom = sorted(entries_sorted[2:], key=lambda item: item[2][0])
+            tl, tr = top
+            bl, br = bottom
+            ordered = [tl, tr, br, bl]
+        return ordered
+
+    @staticmethod
+    def _inner_corner(corners: np.ndarray, target: np.ndarray) -> np.ndarray:
+        distances = [np.linalg.norm(c - target) for c in corners]
+        return corners[int(np.argmin(distances))]
+
     def calibrate_perspective(
         self, marker_corners: Dict[int, np.ndarray], force: bool = False
     ) -> bool:
@@ -402,7 +456,8 @@ class VisionService:
             force: If True, calibrate immediately without averaging
         """
         required_ids = self.config.marker_ids[:4]
-        if not all(mid in marker_corners for mid in required_ids):
+        ordered = self._order_markers(marker_corners, required_ids)
+        if not ordered:
             logger.warning(
                 "Missing markers for calibration. Found: %s, Required: %s",
                 list(marker_corners.keys()),
@@ -410,39 +465,36 @@ class VisionService:
             )
             return False
 
+        centers = [entry[2] for entry in ordered]
         # Validate marker layout
-        is_valid, error_msg = self._validate_marker_layout(marker_corners)
+        is_valid, error_msg = self._validate_marker_layout(centers)
         if not is_valid:
             logger.warning("Invalid marker layout: %s", error_msg)
             return False
 
         try:
-            # Get inner corners of markers (same as visualization)
-            # This ensures calibration matches what users see
             src_points = []
-            corner_indices = [2, 3, 0, 1]  # TL, TR, BR, BL markers -> inner corners
-            for i, marker_id in enumerate(required_ids):
-                corners = marker_corners[marker_id]
-                
+            quad_center = np.mean(centers, axis=0)
+            for marker_id, corners, center in ordered:
                 # Debug: Log all corners for this marker
                 logger.debug(f"Marker ID {marker_id} corners:")
                 for ci, corner in enumerate(corners):
                     logger.debug(f"  Corner {ci}: ({corner[0]:.1f}, {corner[1]:.1f})")
-                
-                # Use inner corner (facing the material area)
-                # ID 0 (top-left): bottom-right corner (index 2)
-                # ID 1 (top-right): bottom-left corner (index 3)
-                # ID 2 (bottom-right): top-left corner (index 0)
-                # ID 3 (bottom-left): top-right corner (index 1)
-                inner_corner = corners[corner_indices[i]]
+
+                inner_corner = self._inner_corner(corners, quad_center)
                 src_points.append(inner_corner)
-                logger.debug(f"  Using corner {corner_indices[i]} as inner: ({inner_corner[0]:.1f}, {inner_corner[1]:.1f})")
+                logger.debug(
+                    "  Using inner corner: (%.1f, %.1f)",
+                    inner_corner[0],
+                    inner_corner[1],
+                )
 
             src_points = np.array(src_points, dtype=np.float32)
             
             # Debug: Log marker corner positions
             logger.debug("Calibration corner positions:")
-            for i, (mid, pos) in enumerate(zip(required_ids, src_points)):
+            ordered_ids = [entry[0] for entry in ordered]
+            for i, (mid, pos) in enumerate(zip(ordered_ids, src_points)):
                 logger.debug(f"  ID {mid}: ({pos[0]:.1f}, {pos[1]:.1f})")
 
             # Add to calibration buffer for stability
@@ -791,6 +843,18 @@ class VisionService:
         frame = self.capture_frame()
         if frame is None:
             return None
+        height, width = frame.shape[:2]
+        if width != self.config.width or height != self.config.height:
+            logger.warning(
+                "Camera resolution differs from config (%dx%d -> %dx%d), updating",
+                self.config.width,
+                self.config.height,
+                width,
+                height,
+            )
+            self.config.width = width
+            self.config.height = height
+            self.reset_calibration()
         return self._process_frame(frame, force_calibrate=False)
 
     def _process_frame(
@@ -870,19 +934,15 @@ class VisionService:
                     )
             
             # Draw calibration boundary if we have all 4 markers
-            if len(marker_ids) == 4 and set(marker_ids) == {0, 1, 2, 3}:
-                # Use outer corners of markers (not centers) to show actual calibration area
-                # This matches the coordinate system that users register materials in
+            required_ids = self.config.marker_ids[:4]
+            ordered = self._order_markers(marker_corners, required_ids)
+            if ordered:
                 outer_corners = []
-                for mid in [0, 1, 2, 3]:  # Ordered: TL, TR, BR, BL
-                    corners = marker_corners[mid]
-                    # Get the inner corner of each marker (closest to center)
-                    # ID 0 (top-left): bottom-right corner (index 2)
-                    # ID 1 (top-right): bottom-left corner (index 3)
-                    # ID 2 (bottom-right): top-left corner (index 0)
-                    # ID 3 (bottom-left): top-right corner (index 1)
-                    corner_indices = [2, 3, 0, 1]
-                    inner_corner = corners[corner_indices[mid]].astype(np.int32)
+                quad_center = np.mean([entry[2] for entry in ordered], axis=0)
+                for _, corners, _ in ordered:
+                    inner_corner = self._inner_corner(corners, quad_center).astype(
+                        np.int32
+                    )
                     outer_corners.append(inner_corner)
                 
                 # Draw yellow quadrilateral showing calibration area

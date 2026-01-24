@@ -23,6 +23,8 @@ class RouterInput:
     current_region_id: Optional[str] = None
     last_region_id: Optional[str] = None
     candidates: Optional[List[Dict[str, Any]]] = None
+    require_pointing: bool = False
+    material_visible: Optional[bool] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -34,6 +36,8 @@ class RouterInput:
             "current_region_id": self.current_region_id,
             "last_region_id": self.last_region_id,
             "candidates": self.candidates or [],
+            "require_pointing": self.require_pointing,
+            "material_visible": self.material_visible,
         }
 
 
@@ -104,7 +108,19 @@ class RouterService:
                     fallback_used=False,
                 )
 
-            # Rule 4: Help/hint requests
+            # Rule 4: Material visibility (when pointing is required)
+            if (
+                router_input.require_pointing
+                and router_input.material_visible is False
+            ):
+                return RouterOutput(
+                    action="material_not_visible",
+                    args={},
+                    raw_response="rule_based",
+                    fallback_used=False,
+                )
+
+            # Rule 5: Help/hint requests
             help_keywords = ["ヒント", "わからない", "難しい", "教えて", "hint", "help"]
             if any(keyword in text_lower for keyword in help_keywords):
                 if router_input.current_region_id:
@@ -117,6 +133,13 @@ class RouterService:
                         raw_response="rule_based",
                         fallback_used=False,
                     )
+                if router_input.require_pointing:
+                    return RouterOutput(
+                        action="pointing_unknown",
+                        args={},
+                        raw_response="rule_based",
+                        fallback_used=False,
+                    )
                 else:
                     return RouterOutput(
                         action="clarify",
@@ -125,7 +148,19 @@ class RouterService:
                         fallback_used=False,
                     )
 
-        # Rule 5: Current region exists -> use script
+            # Rule 6: Pointing required but no region
+            if (
+                router_input.require_pointing
+                and not router_input.current_region_id
+            ):
+                return RouterOutput(
+                    action="pointing_unknown",
+                    args={},
+                    raw_response="rule_based",
+                    fallback_used=False,
+                )
+
+        # Rule 7: Current region exists -> use script
         if router_input.current_region_id:
             return RouterOutput(
                 action="respond_script",
@@ -137,7 +172,7 @@ class RouterService:
                 fallback_used=False,
             )
 
-        # Rule 6: Default -> clarify
+        # Rule 8: Default -> clarify
         return RouterOutput(
             action="clarify",
             args={"question": "どの問題や文章のことか教えてね。"},
@@ -151,4 +186,3 @@ class RouterService:
             "total_requests": self._total_requests,
             "reject_count": self._reject_count,
         }
-
