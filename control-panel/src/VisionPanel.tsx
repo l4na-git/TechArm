@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 type VisionFrame = {
   timestamp: number;
   markers_detected: number[];
+  markers_corners: Record<string, number[][]>;
   is_calibrated: boolean;
   hand_detected: boolean;
   fingertip_u: number | null;
@@ -26,6 +27,36 @@ export function VisionPanel({ apiUrl }: VisionPanelProps) {
   const wsRef = useRef<WebSocket | null>(null);
   const frameCountRef = useRef(0);
   const fpsIntervalRef = useRef<number | null>(null);
+
+  const getOrderedMarkerIds = (frame: VisionFrame | null) => {
+    if (!frame) {
+      return null;
+    }
+    const entries = Object.entries(frame.markers_corners || {}).map(
+      ([id, corners]) => {
+        const center = corners.reduce(
+          (acc, point) => [acc[0] + point[0], acc[1] + point[1]],
+          [0, 0],
+        );
+        return {
+          id,
+          center: [center[0] / corners.length, center[1] / corners.length],
+        };
+      },
+    );
+    if (entries.length < 4) {
+      return null;
+    }
+    const sums = entries.map((entry) => entry.center[0] + entry.center[1]);
+    const diffs = entries.map((entry) => entry.center[0] - entry.center[1]);
+    const tl = entries[sums.indexOf(Math.min(...sums))];
+    const br = entries[sums.indexOf(Math.max(...sums))];
+    const tr = entries[diffs.indexOf(Math.max(...diffs))];
+    const bl = entries[diffs.indexOf(Math.min(...diffs))];
+    return [tl.id, tr.id, br.id, bl.id];
+  };
+
+  const orderedMarkerIds = getOrderedMarkerIds(visionFrame);
 
   useEffect(() => {
     // Calculate FPS every second
@@ -233,6 +264,12 @@ export function VisionPanel({ apiUrl }: VisionPanelProps) {
                     [{visionFrame.markers_detected.join(", ")}]
                   </span>
                 )}
+              </span>
+            </div>
+            <div className="status-item">
+              <span className="status-label">Line order:</span>
+              <span className="status-value">
+                {orderedMarkerIds ? `[${orderedMarkerIds.join(", ")}]` : "N/A"}
               </span>
             </div>
 
