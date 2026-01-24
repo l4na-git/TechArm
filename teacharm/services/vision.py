@@ -983,6 +983,12 @@ class VisionService:
             fingertip_px = self._last_hand_px
         smoothed = self.smooth_fingertip(fingertip_px)
 
+        if smoothed is not None:
+            hand_detected = True
+            fingertip_u, fingertip_v = self.pixel_to_normalized(
+                int(smoothed[0]), int(smoothed[1])
+            )
+
         # Draw visualizations on original frame BEFORE warping
         display_frame = frame.copy()
         
@@ -1035,8 +1041,8 @@ class VisionService:
             except Exception as e:
                 logger.warning("Failed to warp fingertip for preview: %s", e)
 
-        # Draw hand detection on original frame before warping (when not calibrated)
-        if smoothed is not None and not is_calibrated:
+        # Draw hand detection on original frame before warping
+        if smoothed is not None:
             x, y = int(smoothed[0]), int(smoothed[1])
             cv2.circle(display_frame, (x, y), 15, (0, 255, 0), -1)
             cv2.circle(display_frame, (x, y), 20, (255, 255, 255), 2)
@@ -1051,24 +1057,11 @@ class VisionService:
             if warped is not None:
                 display_frame = warped
 
-                # Draw fingertip on calibrated preview in warped coordinates
-                if warped_fingertip is not None:
-                    x, y = warped_fingertip
-                    if 0 <= x < self.config.width and 0 <= y < self.config.height:
-                        cv2.circle(display_frame, (x, y), 15, (0, 255, 0), -1)
-                        cv2.circle(display_frame, (x, y), 20, (255, 255, 255), 2)
-                        cv2.line(display_frame, (x - 30, y), (x + 30, y), (0, 255, 0), 2)
-                        cv2.line(display_frame, (x, y - 30), (x, y + 30), (0, 255, 0), 2)
+                # Dot is already drawn on the original frame and will be warped with it.
 
         # Store frames for preview
         self.last_frame = frame
         self.last_display_frame = display_frame
-
-        if smoothed is not None:
-            hand_detected = True
-            fingertip_u, fingertip_v = self.pixel_to_normalized(
-                int(smoothed[0]), int(smoothed[1])
-            )
 
         # Convert marker corners to serializable format
         serializable_corners = {}
