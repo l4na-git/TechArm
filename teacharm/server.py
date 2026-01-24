@@ -190,6 +190,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
         # Track last region for event triggering
         last_region_id: Optional[str] = None
+        last_hand_source: Optional[str] = None
         region_dwell_frames = 0
         DWELL_THRESHOLD = 5  # Frames to trigger on_point event
         ON_POINT_COOLDOWN = 3.0
@@ -236,6 +237,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     image = data.pop("image", None)
 
                     vision_frame = VisionFrame(**data)
+                    if vision_frame.hand_source != last_hand_source:
+                        logger.info(
+                            "Offload hand source: %s", vision_frame.hand_source
+                        )
+                        last_hand_source = vision_frame.hand_source
 
                     # Map fingertip to material region if hand detected
                     current_region_id = None
