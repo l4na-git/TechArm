@@ -45,6 +45,9 @@ aruco:
 hand_detection:
   # Detection method: "mediapipe" (recommended) or "color" (fallback)
   method: "mediapipe"
+  # Allow fallback to simple color-based detection if MediaPipe fails
+  # Disable to avoid false positives when MediaPipe is available
+  fallback: false
   # Confidence threshold for MediaPipe detection (0.0-1.0)
   # Lower = more sensitive but may have false positives
   confidence_threshold: 0.4
