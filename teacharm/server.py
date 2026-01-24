@@ -121,6 +121,7 @@ class TeachArmContext:
         self.calibration_path = settings.config_dir / "arm_calibration.json"
         self.calibration = self._load_json(self.calibration_path)
         self.offload_calibration_requested = False
+        self.offload_reset_requested = False
 
     def reload_scripts(self) -> None:
         self.scripts = load_scripts(self.scripts_path)
@@ -225,6 +226,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     if ctx.offload_calibration_requested:
                         payload["force_calibrate"] = True
                         ctx.offload_calibration_requested = False
+                    if ctx.offload_reset_requested:
+                        payload["reset_calibration"] = True
+                        ctx.offload_reset_requested = False
 
                     await remote_ws.send(json.dumps(payload))
                     response = await remote_ws.recv()
@@ -764,6 +768,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "markers_detected": marker_ids,
         }
 
+    @app.post("/api/vision/reset")
+    async def reset_vision_calibration() -> dict:
+        """Reset perspective calibration."""
+        if ctx.settings.vision_offload_url:
+            ctx.offload_reset_requested = True
+            return {"status": "requested"}
+        ctx.vision.reset_calibration()
+        return {"status": "reset"}
+
     @app.websocket("/ws/vision")
     async def websocket_vision(websocket: WebSocket) -> None:
         """
@@ -942,6 +955,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     continue
 
                 force_calibrate = bool(payload.get("force_calibrate"))
+                if payload.get("reset_calibration"):
+                    ctx.vision.reset_calibration()
                 vision_frame = ctx.vision.process_frame_from_image(
                     frame, force_calibrate=force_calibrate
                 )
