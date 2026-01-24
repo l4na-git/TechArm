@@ -464,8 +464,8 @@ class VisionService:
             force: If True, calibrate immediately without averaging
         """
         required_ids = self.config.marker_ids[:4]
-        entries = self._markers_by_id(marker_corners, required_ids)
-        if not entries:
+        entries_by_id = self._markers_by_id(marker_corners, required_ids)
+        if not entries_by_id:
             logger.warning(
                 "Missing markers for calibration. Found: %s, Required: %s",
                 list(marker_corners.keys()),
@@ -473,8 +473,8 @@ class VisionService:
             )
             return False
 
-        ordered = self._order_markers_by_position(entries)
-        centers = [entry[2] for entry in ordered]
+        ordered_by_position = self._order_markers_by_position(entries_by_id)
+        centers = [entry[2] for entry in ordered_by_position]
         # Validate marker layout
         is_valid, error_msg = self._validate_marker_layout(centers)
         if not is_valid:
@@ -484,7 +484,7 @@ class VisionService:
         try:
             src_points = []
             quad_center = np.mean(centers, axis=0)
-            for marker_id, corners, center in ordered:
+            for marker_id, corners, center in entries_by_id:
                 # Debug: Log all corners for this marker
                 logger.debug(f"Marker ID {marker_id} corners:")
                 for ci, corner in enumerate(corners):
@@ -971,9 +971,9 @@ class VisionService:
             
             # Draw calibration boundary if we have all 4 markers
             required_ids = self.config.marker_ids[:4]
-            entries = self._markers_by_id(marker_corners, required_ids)
-            if entries:
-                ordered = self._order_markers_by_position(entries)
+            entries_by_id = self._markers_by_id(marker_corners, required_ids)
+            if entries_by_id:
+                ordered = self._order_markers_by_position(entries_by_id)
                 outer_corners = []
                 quad_center = np.mean([entry[2] for entry in ordered], axis=0)
                 for _, corners, _ in ordered:
