@@ -95,6 +95,19 @@ export function VisionPanel({ apiUrl }: VisionPanelProps) {
     }
   };
 
+  const resetCalibration = async () => {
+    try {
+      const response = await fetch(`${apiUrl}/api/vision/reset`, {
+        method: "POST",
+      });
+      const data = await response.json();
+      console.log("[Vision] Reset calibration response:", data);
+      setIsCalibrated(false);
+    } catch (error) {
+      console.error("[Vision] Failed to reset calibration:", error);
+    }
+  };
+
   const connectWebSocket = () => {
     const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
     const ws = new WebSocket(`${wsUrl}/ws/vision`);
@@ -169,6 +182,15 @@ export function VisionPanel({ apiUrl }: VisionPanelProps) {
               disabled={!visionFrame || visionFrame.markers_detected.length < 4}
             >
               Calibrate
+            </button>
+          )}
+          {isActive && (
+            <button
+              onClick={resetCalibration}
+              className="btn-secondary"
+              disabled={!visionFrame}
+            >
+              Reset Calibration
             </button>
           )}
         </div>
