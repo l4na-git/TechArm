@@ -66,6 +66,7 @@ class CameraConfig(BaseModel):
     marker_ids: List[int] = [0, 1, 2, 3]
     marker_size: float = 0.05
     auto_order_by_position: bool = True
+    corner_mode: str = "inner"  # inner | center | outer
     hand_detection_method: str = "mediapipe"  # mediapipe or color
     mediapipe_confidence: float = 0.5
     mediapipe_model_complexity: int = 0  # 0 or 1
@@ -178,6 +179,7 @@ class VisionService:
                 auto_order_by_position=aruco_cfg.get(
                     "auto_order_by_position", True
                 ),
+                corner_mode=aruco_cfg.get("corner_mode", "inner"),
                 hand_detection_method=hand_cfg.get("method", "mediapipe"),
                 mediapipe_confidence=hand_cfg.get(
                     "confidence_threshold", 0.5
@@ -445,6 +447,21 @@ class VisionService:
         distances = [np.linalg.norm(c - target) for c in corners]
         return corners[int(np.argmin(distances))]
 
+    @staticmethod
+    def _outer_corner(corners: np.ndarray, target: np.ndarray) -> np.ndarray:
+        distances = [np.linalg.norm(c - target) for c in corners]
+        return corners[int(np.argmax(distances))]
+
+    def _select_calibration_point(
+        self, corners: np.ndarray, quad_center: np.ndarray
+    ) -> np.ndarray:
+        mode = (self.config.corner_mode or "inner").lower()
+        if mode == "center":
+            return np.mean(corners, axis=0)
+        if mode == "outer":
+            return self._outer_corner(corners, quad_center)
+        return self._inner_corner(corners, quad_center)
+
     def calibrate_perspective(
         self, marker_corners: Dict[int, np.ndarray], force: bool = False
     ) -> bool:
@@ -490,12 +507,13 @@ class VisionService:
                 for ci, corner in enumerate(corners):
                     logger.debug(f"  Corner {ci}: ({corner[0]:.1f}, {corner[1]:.1f})")
 
-                inner_corner = self._inner_corner(corners, quad_center)
-                src_points.append(inner_corner)
+                point = self._select_calibration_point(corners, quad_center)
+                src_points.append(point)
                 logger.debug(
-                    "  Using inner corner: (%.1f, %.1f)",
-                    inner_corner[0],
-                    inner_corner[1],
+                    "  Using %s point: (%.1f, %.1f)",
+                    self.config.corner_mode,
+                    point[0],
+                    point[1],
                 )
 
             src_points = np.array(src_points, dtype=np.float32)
@@ -977,10 +995,10 @@ class VisionService:
                 outer_corners = []
                 quad_center = np.mean([entry[2] for entry in ordered], axis=0)
                 for _, corners, _ in ordered:
-                    inner_corner = self._inner_corner(corners, quad_center).astype(
-                        np.int32
-                    )
-                    outer_corners.append(inner_corner)
+                    point = self._select_calibration_point(
+                        corners, quad_center
+                    ).astype(np.int32)
+                    outer_corners.append(point)
                 
                 # Draw yellow quadrilateral showing calibration area
                 pts = np.array(outer_corners, np.int32).reshape((-1, 1, 2))
