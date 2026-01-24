@@ -53,6 +53,8 @@ class CameraConfig(BaseModel):
 
     device_index: int = 0
     device_path: Optional[str] = None
+    flip_horizontal: bool = False
+    flip_vertical: bool = False
     width: int = 1280
     height: int = 720
     fps: int = 30
@@ -161,6 +163,8 @@ class VisionService:
             return CameraConfig(
                 device_index=device_cfg.get("index", 0),
                 device_path=device_cfg.get("path"),
+                flip_horizontal=device_cfg.get("flip_horizontal", False),
+                flip_vertical=device_cfg.get("flip_vertical", False),
                 width=resolution_cfg.get("width", 1280),
                 height=resolution_cfg.get("height", 720),
                 fps=params_cfg.get("fps", 30),
@@ -402,7 +406,7 @@ class VisionService:
         
         return True, "OK"
 
-    def _order_markers(
+    def _markers_by_id(
         self, marker_corners: Dict[int, np.ndarray], required_ids: List[int]
     ) -> Optional[List[Tuple[int, np.ndarray, np.ndarray]]]:
         if not all(mid in marker_corners for mid in required_ids):
@@ -412,8 +416,12 @@ class VisionService:
             corners = marker_corners[marker_id]
             center = np.mean(corners, axis=0)
             entries.append((marker_id, corners, center))
-        if not self.config.auto_order_by_position:
-            return entries
+        return entries
+
+    @staticmethod
+    def _order_markers_by_position(
+        entries: List[Tuple[int, np.ndarray, np.ndarray]]
+    ) -> List[Tuple[int, np.ndarray, np.ndarray]]:
         sums = [entry[2][0] + entry[2][1] for entry in entries]
         diffs = [entry[2][0] - entry[2][1] for entry in entries]
         tl = entries[int(np.argmin(sums))]
@@ -456,8 +464,8 @@ class VisionService:
             force: If True, calibrate immediately without averaging
         """
         required_ids = self.config.marker_ids[:4]
-        ordered = self._order_markers(marker_corners, required_ids)
-        if not ordered:
+        entries = self._markers_by_id(marker_corners, required_ids)
+        if not entries:
             logger.warning(
                 "Missing markers for calibration. Found: %s, Required: %s",
                 list(marker_corners.keys()),
@@ -465,6 +473,7 @@ class VisionService:
             )
             return False
 
+        ordered = self._order_markers_by_position(entries)
         centers = [entry[2] for entry in ordered]
         # Validate marker layout
         is_valid, error_msg = self._validate_marker_layout(centers)
@@ -493,8 +502,7 @@ class VisionService:
             
             # Debug: Log marker corner positions
             logger.debug("Calibration corner positions:")
-            ordered_ids = [entry[0] for entry in ordered]
-            for i, (mid, pos) in enumerate(zip(ordered_ids, src_points)):
+            for i, (mid, pos) in enumerate(zip(required_ids, src_points)):
                 logger.debug(f"  ID {mid}: ({pos[0]:.1f}, {pos[1]:.1f})")
 
             # Add to calibration buffer for stability
@@ -846,6 +854,7 @@ class VisionService:
         if width != self.config.width or height != self.config.height:
             self.config.width = width
             self.config.height = height
+        frame = self._apply_flip(frame)
         return self._process_frame(frame, force_calibrate=force_calibrate)
 
     def process_frame(self) -> Optional[VisionFrame]:
@@ -869,7 +878,21 @@ class VisionService:
             self.config.width = width
             self.config.height = height
             self.reset_calibration()
+        frame = self._apply_flip(frame)
         return self._process_frame(frame, force_calibrate=False)
+
+    def _apply_flip(self, frame: np.ndarray) -> np.ndarray:
+        """Apply configured flips for mirrored/upside-down camera feeds."""
+        flip_code = None
+        if self.config.flip_horizontal and self.config.flip_vertical:
+            flip_code = -1
+        elif self.config.flip_horizontal:
+            flip_code = 1
+        elif self.config.flip_vertical:
+            flip_code = 0
+        if flip_code is None:
+            return frame
+        return cv2.flip(frame, flip_code)
 
     def _process_frame(
         self, frame: np.ndarray, force_calibrate: bool
@@ -889,18 +912,17 @@ class VisionService:
             if recalibrated:
                 self.calibration_frame_count = 0
             is_calibrated = self.perspective_matrix is not None
-        elif len(marker_ids) >= 4 and self.auto_calibrate_enabled:
+        elif (
+            len(marker_ids) >= 4
+            and self.auto_calibrate_enabled
+            and self.perspective_matrix is None
+        ):
             # Accumulate calibration data
             self.calibration_frame_count += 1
 
             # Auto-calibrate after seeing markers for multiple frames
             if self.calibration_frame_count >= 10:
-                log_msg = (
-                    "Auto-calibrating (seen markers for 10 frames)"
-                    if not is_calibrated
-                    else "Auto-recalibrating (seen markers for 10 frames)"
-                )
-                logger.info(log_msg)
+                logger.info("Auto-calibrating (seen markers for 10 frames)")
                 recalibrated = self.calibrate_perspective(
                     marker_corners, force=False
                 )
@@ -949,8 +971,9 @@ class VisionService:
             
             # Draw calibration boundary if we have all 4 markers
             required_ids = self.config.marker_ids[:4]
-            ordered = self._order_markers(marker_corners, required_ids)
-            if ordered:
+            entries = self._markers_by_id(marker_corners, required_ids)
+            if entries:
+                ordered = self._order_markers_by_position(entries)
                 outer_corners = []
                 quad_center = np.mean([entry[2] for entry in ordered], axis=0)
                 for _, corners, _ in ordered:
