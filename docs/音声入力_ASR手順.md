@@ -50,6 +50,11 @@ python tools/mic_record_send.py --duration 4
 python tools/mic_record_send_keyboard.py --key space
 ```
 
+### 押している間だけ録音→送信→TTS再生
+```bash
+python tools/mic_record_send_keyboard.py --key space --play-response
+```
+
 ### 押している間だけ録音（GPIOボタン）
 ```bash
 python tools/mic_record_send_gpio.py --pin 17 --pull-up
