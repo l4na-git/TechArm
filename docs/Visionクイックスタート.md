@@ -8,8 +8,8 @@
 cd /path/to/TechArm
 pip install -r requirements/vision.txt
 
-MediaPipe の `solutions` を使いたい場合は Python 3.10 の venv で
-`requirements/vision-py310.txt` を使う:
+MediaPipe の `solutions` を使いたい場合は `.venv` を Python 3.10 で作成し、
+`.venv` に `requirements/vision-py310.txt` をインストールする:
 
 ```bash
 /opt/homebrew/opt/python@3.10/bin/python3.10 -m venv .venv
@@ -85,6 +85,11 @@ hand_detection:
 - 4つ全てのマーカーがカメラ視野内にあるか確認
 - 照明を明るくする
 - デバッグモードで確認: `config/camera.yaml` の `debug.show_preview: true`
+
+### 📷 Webカメラに切り替える
+
+カメラの index を調べて `config/camera.yaml` を更新する手順は
+[Webカメラ設定ガイド](./Webカメラ設定ガイド.md) を参照。
 
 ## 次のステップ
 
