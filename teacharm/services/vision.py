@@ -834,6 +834,11 @@ class VisionService:
         
         Automatically falls back to color-based if MediaPipe fails.
         """
+        if self.config.hand_detection_method != "mediapipe":
+            result = self.detect_hand_color_based(frame)
+            self.last_hand_source = "color" if result is not None else "none"
+            return result
+
         if (
             self.config.hand_detection_method == "mediapipe"
             and self.hands_detector is not None
@@ -846,7 +851,11 @@ class VisionService:
                 self.last_hand_source = "none"
                 return None
             # Fall through to color-based if MediaPipe fails
-        
+        elif self.config.hand_detection_method == "mediapipe":
+            if not self.config.hand_detection_fallback:
+                self.last_hand_source = "none"
+                return None
+
         result = self.detect_hand_color_based(frame)
         self.last_hand_source = "color" if result is not None else "none"
         return result
