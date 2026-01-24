@@ -9,8 +9,8 @@ device:
 
 # Resolution settings
 resolution:
-  width: 960
-  height: 540
+  width: 1920
+  height: 1080
 
 # Camera parameters (OpenCV VideoCapture properties)
 parameters:
@@ -31,6 +31,8 @@ aruco:
   dictionary: "DICT_4X4_50"
   # Expected marker IDs (4 corners)
   marker_ids: [0, 1, 2, 3]
+  # Auto-order markers by position to handle mirrored/rotated camera feeds
+  auto_order_by_position: true
   # Marker size in meters (for pose estimation, if needed)
   marker_size: 0.05
 
