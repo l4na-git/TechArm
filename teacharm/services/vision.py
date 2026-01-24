@@ -456,17 +456,12 @@ class VisionService:
         self,
         corners: np.ndarray,
         quad_center: np.ndarray,
-        marker_index: Optional[int] = None,
     ) -> np.ndarray:
         mode = (self.config.corner_mode or "inner").lower()
         if mode == "center":
             return np.mean(corners, axis=0)
         if mode == "outer":
             return self._outer_corner(corners, quad_center)
-        if marker_index is not None:
-            corner_indices = [2, 3, 0, 1]  # TL, TR, BR, BL -> inner corners
-            if 0 <= marker_index < len(corner_indices):
-                return corners[corner_indices[marker_index]]
         return self._inner_corner(corners, quad_center)
 
     def calibrate_perspective(
@@ -506,21 +501,21 @@ class VisionService:
             return False
 
         try:
+            entries_for_calibration = (
+                ordered_by_position
+                if self.config.auto_order_by_position
+                else entries_by_id
+            )
             src_points = []
             quad_center = np.mean(centers, axis=0)
-            for marker_id, corners, center in entries_by_id:
+            for marker_id, corners, center in entries_for_calibration:
                 # Debug: Log all corners for this marker
                 logger.debug(f"Marker ID {marker_id} corners:")
                 for ci, corner in enumerate(corners):
                     logger.debug(f"  Corner {ci}: ({corner[0]:.1f}, {corner[1]:.1f})")
 
-                marker_index = (
-                    required_ids.index(marker_id)
-                    if marker_id in required_ids
-                    else None
-                )
                 point = self._select_calibration_point(
-                    corners, quad_center, marker_index=marker_index
+                    corners, quad_center
                 )
                 src_points.append(point)
                 logger.debug(
@@ -534,8 +529,15 @@ class VisionService:
             
             # Debug: Log marker corner positions
             logger.debug("Calibration corner positions:")
-            for i, (mid, pos) in enumerate(zip(required_ids, src_points)):
-                logger.debug(f"  ID {mid}: ({pos[0]:.1f}, {pos[1]:.1f})")
+            for marker_id, pos in zip(
+                [entry[0] for entry in entries_for_calibration], src_points
+            ):
+                logger.debug(
+                    "  ID %s: (%.1f, %.1f)",
+                    marker_id,
+                    pos[0],
+                    pos[1],
+                )
 
             # Add to calibration buffer for stability
             self.calibration_buffer.append(src_points)
@@ -1005,12 +1007,16 @@ class VisionService:
             required_ids = self.config.marker_ids[:4]
             entries_by_id = self._markers_by_id(marker_corners, required_ids)
             if entries_by_id:
-                ordered = self._order_markers_by_position(entries_by_id)
+                ordered = (
+                    self._order_markers_by_position(entries_by_id)
+                    if self.config.auto_order_by_position
+                    else entries_by_id
+                )
                 outer_corners = []
                 quad_center = np.mean([entry[2] for entry in ordered], axis=0)
-                for idx, (_, corners, _) in enumerate(ordered):
+                for _, corners, _ in ordered:
                     point = self._select_calibration_point(
-                        corners, quad_center, marker_index=idx
+                        corners, quad_center
                     ).astype(np.int32)
                     outer_corners.append(point)
                 
