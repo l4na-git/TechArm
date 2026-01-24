@@ -641,6 +641,9 @@ class VisionService:
         Applies perspective calibration when available so mapping matches
         the warped preview/material coordinate space.
         """
+        raw_u = x / self.config.width
+        raw_v = y / self.config.height
+
         warped_x = float(x)
         warped_y = float(y)
         if self.perspective_matrix is not None:
@@ -653,6 +656,17 @@ class VisionService:
 
         u = warped_x / self.config.width
         v = warped_y / self.config.height
+
+        if self.perspective_matrix is not None:
+            margin = 0.2
+            if not (-margin <= u <= 1 + margin and -margin <= v <= 1 + margin):
+                logger.debug(
+                    "Warped point out of range (u=%.3f, v=%.3f); using raw coords",
+                    u,
+                    v,
+                )
+                u = raw_u
+                v = raw_v
 
         # Clamp to [0, 1] to avoid out-of-bounds mapping after warp.
         u = max(0.0, min(1.0, u))
