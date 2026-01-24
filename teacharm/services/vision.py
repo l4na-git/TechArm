@@ -1057,7 +1057,14 @@ class VisionService:
             if warped is not None:
                 display_frame = warped
 
-                # Dot is already drawn on the original frame and will be warped with it.
+                if fingertip_u is not None and fingertip_v is not None:
+                    x = int(fingertip_u * self.config.width)
+                    y = int(fingertip_v * self.config.height)
+                    if 0 <= x < self.config.width and 0 <= y < self.config.height:
+                        cv2.circle(display_frame, (x, y), 15, (0, 255, 0), -1)
+                        cv2.circle(display_frame, (x, y), 20, (255, 255, 255), 2)
+                        cv2.line(display_frame, (x - 30, y), (x + 30, y), (0, 255, 0), 2)
+                        cv2.line(display_frame, (x, y - 30), (x, y + 30), (0, 255, 0), 2)
 
         # Store frames for preview
         self.last_frame = frame
