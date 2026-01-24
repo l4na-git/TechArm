@@ -60,7 +60,32 @@ python tools/mic_record_send_keyboard.py --key space
 python tools/mic_record_send_keyboard.py --key space --play-response
 ```
 
-### 4. 押している間だけ録音（GPIOボタン） (mic_record_send_gpio.py)
+### 4. 押している間だけ録音（Macのメディアキー） (mic_record_send_media_key_mac.py)
+
+Macの再生/一時停止などのメディアキーを押している間だけ録音して送信します。  
+初回は「アクセシビリティ」権限の許可が必要です。
+
+**使用方法:**
+```bash
+python tools/mic_record_send_media_key_mac.py --media-key play
+```
+
+**応答音声を再生:**
+```bash
+python tools/mic_record_send_media_key_mac.py --media-key play
+```
+
+**トグル録音（押すたびに開始/停止）:**
+```bash
+python tools/mic_record_send_media_key_mac.py --media-key play --mode toggle
+```
+
+**応答音声の自動再生を無効化:**
+```bash
+python tools/mic_record_send_media_key_mac.py --media-key play --no-play-response
+```
+
+### 5. 押している間だけ録音（GPIOボタン） (mic_record_send_gpio.py)
 
 Raspberry Piのボタン入力で、押している間だけ録音して送信します。
 
@@ -69,7 +94,7 @@ Raspberry Piのボタン入力で、押している間だけ録音して送信�
 python tools/mic_record_send_gpio.py --pin 17 --pull-up
 ```
 
-### 5. 録音の再生 (play_audio.py)
+### 6. 録音の再生 (play_audio.py)
 
 録音した WAV ファイルを再生します。
 
@@ -78,7 +103,7 @@ python tools/mic_record_send_gpio.py --pin 17 --pull-up
 python tools/play_audio.py recording.wav
 ```
 
-### 6. 座標変換ツール (convert_coordinates.py)
+### 7. 座標変換ツール (convert_coordinates.py)
 
 教材の座標をピクセル値から正規化座標（0.0~1.0）に変換します。
 
@@ -105,7 +130,7 @@ python tools/convert_coordinates.py \
 }
 ```
 
-### 7. 一括変換（JSONファイル）
+### 8. 一括変換（JSONファイル）
 
 **入力ファイル（example_pixel_coordinates.json）:**
 ```json

@@ -2,3 +2,4 @@
 faster-whisper==1.0.3
 sounddevice==0.5.3
 pynput==1.7.7
+pyobjc==10.3.1
