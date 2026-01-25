@@ -143,6 +143,7 @@ class DeepSeekService:
             content = data["choices"][0]["message"]["content"]
             # Strip any XML-like tags from model output.
             cleaned = re.sub(r"<[^>]+>", "", content)
+            cleaned = self._normalize_ranges(cleaned)
             return cleaned.strip()
 
     def _build_system_prompt(self, request: GenerationRequest) -> str:
@@ -176,6 +177,15 @@ class DeepSeekService:
             base_prompt += context_section
         
         return base_prompt
+
+    @staticmethod
+    def _normalize_ranges(text: str) -> str:
+        """Normalize range expressions like 'ア～ウ' to 'アからウ'."""
+        return re.sub(
+            r"([A-Za-z0-9０-９ぁ-んァ-ン一-龥]+)\s*[〜～~]\s*([A-Za-z0-9０-９ぁ-んァ-ン一-龥]+)",
+            r"\1から\2",
+            text,
+        )
 
     def _build_user_message(self, request: GenerationRequest) -> str:
         """Build user message for DeepSeek."""
