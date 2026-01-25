@@ -232,20 +232,25 @@ class ArmService:
         
         Calibration establishes joint angle offsets to ensure consistent
         positioning across different SO-101 units. Required before any motion.
+        
+        Note: This method does NOT establish a connection. Connection is
+        established on-demand in move_joints() or move_to().
         """
-        if not self._connected:
-            await self.connect()
         if self._calibrated:
             return
         
-        logger.info("Ensuring SO-101 calibration")
-        calibration = getattr(self._motor_bus, "calibration", None)
-        read_calibration = getattr(self._motor_bus, "read_calibration", None)
-        if calibration == {} and callable(read_calibration):
-            try:
-                self._motor_bus.calibration = read_calibration()
-            except Exception as exc:  # best-effort, fallback to raw reads
-                logger.warning("Failed to read motor calibration: %s", exc)
+        # If already connected, read calibration from motor bus
+        if self._connected:
+            logger.info("Ensuring SO-101 calibration")
+            calibration = getattr(self._motor_bus, "calibration", None)
+            read_calibration = getattr(self._motor_bus, "read_calibration", None)
+            if calibration == {} and callable(read_calibration):
+                try:
+                    self._motor_bus.calibration = read_calibration()
+                except Exception as exc:  # best-effort, fallback to raw reads
+                    logger.warning("Failed to read motor calibration: %s", exc)
+        
+        # Mark as calibrated (even if not connected, will retry on motion)
         self._calibrated = True
 
     async def move_to(self, command: ArmCommand) -> None:
@@ -258,6 +263,10 @@ class ArmService:
             Requires inverse kinematics to convert (x,y,z) to joint angles.
             Currently stubbed - implement IK solver for SO-101 kinematics.
         """
+        # Ensure connection before motion
+        if not self._connected:
+            await self.connect()
+        
         await self.ensure_calibrated()
         logger.info(
             "Moving SO-101 to (%.3f, %.3f, %.3f) speed=%.2f",
@@ -290,6 +299,10 @@ class ArmService:
         Raises:
             ValueError: If angle count != 6 or angles exceed joint limits
         """
+        # Ensure connection before motion
+        if not self._connected:
+            await self.connect()
+        
         await self.ensure_calibrated()
         
         if len(command.angles) != 6:
@@ -375,6 +388,8 @@ class ArmService:
         Returns:
             List of 6 joint angles in degrees
         """
+        if not self._connected:
+            await self.connect()
         await self.ensure_calibrated()
         positions = await self._bus_read("Present_Position")
         logger.info("Reading SO-101 joint positions")
