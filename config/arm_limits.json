@@ -31,5 +31,10 @@
     "type": "joint_angles",
     "angles": [-9.1428571429, -104.967032967, 97.4505494505, 74.4615384615, -9.5384615385, 2.3041474654],
     "_legacy_xyz": {"x": null, "y": null, "z": null}
+  },
+  "init_pose": {
+    "_comment": "Demo initial pose (elbow-up) - joint angles in degrees [j1, j2, j3, j4, j5, j6]",
+    "type": "joint_angles",
+    "angles": [0.0, -45.0, 45.0, 0.0, 0.0, 0.0]
   }
 }
