@@ -1093,7 +1093,10 @@ export default function App() {
                               }}
                             >
                               <span className="material-region-label">
-                                {region.id} {selectedRegionIndex === idx ? "✓" : ""}
+                                {region.label
+                                  ? `${region.label} (${region.id})`
+                                  : region.id}
+                                {selectedRegionIndex === idx ? " ✓" : ""}
                               </span>
                               {/* リサイズハンドル (選択中のみ表示) */}
                               {selectedRegionIndex === idx && (
@@ -1156,7 +1159,11 @@ export default function App() {
                           }}
                         >
                           <div className="material-region-header">
-                            <strong>{region.id}</strong>
+                            <strong>
+                              {region.label
+                                ? `${region.label} (${region.id})`
+                                : region.id}
+                            </strong>
                             <button
                               type="button"
                               className="btn-danger btn-sm"
@@ -1206,6 +1213,7 @@ export default function App() {
                                 <input
                                   type="text"
                                   value={region.label || ""}
+                                  placeholder="例: 四角3"
                                   onChange={(e) =>
                                     updateRegion(idx, { label: e.target.value })
                                   }
