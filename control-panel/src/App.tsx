@@ -173,7 +173,18 @@ export default function App() {
     speed: 0.2,
   });
   const [dialogueText, setDialogueText] = useState("");
+  const [demoState, setDemoState] = useState<"IDLE" | "READY" | "RUNNING">("IDLE");
   const [loading, setLoading] = useState(false);
+  const audioRef = useCallback(() => {
+    let audio = document.getElementById("teacharm-audio") as HTMLAudioElement;
+    if (!audio) {
+      audio = document.createElement("audio");
+      audio.id = "teacharm-audio";
+      audio.style.display = "none";
+      document.body.appendChild(audio);
+    }
+    return audio;
+  }, []);
   const [scriptPath, setScriptPath] = useState("");
   const [scriptLoading, setScriptLoading] = useState(false);
   const [scriptData, setScriptData] = useState<ScriptData | null>(null);
@@ -443,7 +454,33 @@ export default function App() {
         method: "POST",
         body: JSON.stringify(event),
       });
-      appendLog(`Pointer sent: ${JSON.stringify(result.region ?? {})}`);
+      const text = result?.dialogue?.text || "(no text)";
+      const audioPath = result?.audio_path;
+      const executedCmds = result?.executed_commands || [];
+      const cmdErrors = result?.command_errors || [];
+      
+      appendLog(`Pointer: ${text}`);
+      if (executedCmds.length > 0) {
+        appendLog(`Executed ${executedCmds.length} command(s)`);
+      }
+      if (cmdErrors.length > 0) {
+        cmdErrors.forEach((err: any) => {
+          appendLog(`⚠️ Command error [${err.code}]: ${err.command.type}`);
+        });
+      }
+      
+      // Auto-play audio if available
+      if (audioPath) {
+        try {
+          const audio = audioRef();
+          audio.src = audioPath;
+          audio.play().catch(err => {
+            appendLog(`Audio playback failed: ${err.message}`);
+          });
+        } catch (err) {
+          appendLog(`Audio error: ${(err as Error).message}`);
+        }
+      }
     } catch (err) {
       appendLog(`Pointer error: ${(err as Error).message}`);
     } finally {
@@ -490,6 +527,49 @@ export default function App() {
       appendLog("Arm returning to safe pose");
     } catch (err) {
       appendLog(`Safe pose error: ${(err as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const sendInitPose = async () => {
+    setLoading(true);
+    try {
+      await fetchJSON("/api/arm/init_pose", { method: "POST" });
+      appendLog("Arm moved to init pose (elbow-up)");
+    } catch (err) {
+      appendLog(`Init pose error: ${(err as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startDemo = async () => {
+    setLoading(true);
+    setDemoState("READY");
+    try {
+      await fetchJSON("/api/arm/safe_pose", { method: "POST" });
+      appendLog("Demo: safe pose executed");
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await fetchJSON("/api/arm/init_pose", { method: "POST" });
+      appendLog("Demo: init pose executed");
+      appendLog("Demo: READY - waiting for pointer events");
+    } catch (err) {
+      appendLog(`Demo start error: ${(err as Error).message}`);
+      setDemoState("IDLE");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const endDemo = async () => {
+    setLoading(true);
+    setDemoState("IDLE");
+    try {
+      await fetchJSON("/api/arm/safe_pose", { method: "POST" });
+      appendLog("Demo ended: arm returned to safe pose");
+    } catch (err) {
+      appendLog(`Demo end error: ${(err as Error).message}`);
     } finally {
       setLoading(false);
     }
@@ -881,7 +961,36 @@ export default function App() {
               >
                 安全位置へ
               </button>
+              <button
+                type="button"
+                className="btn-info"
+                disabled={loading}
+                onClick={sendInitPose}
+              >
+                初期位置へ
+              </button>
             </form>
+            <div className="demo-control" style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid #ccc" }}>
+              <h3>デモ制御 ({demoState})</h3>
+              <div className="demo-buttons" style={{ display: "flex", gap: "0.5rem" }}>
+                <button
+                  type="button"
+                  className="btn-success"
+                  disabled={loading || demoState !== "IDLE"}
+                  onClick={startDemo}
+                >
+                  🎬 Start Demo
+                </button>
+                <button
+                  type="button"
+                  className="btn-danger"
+                  disabled={loading || demoState === "IDLE"}
+                  onClick={endDemo}
+                >
+                  ⏹️ End Demo
+                </button>
+              </div>
+            </div>
           </Section>
 
           <Section
