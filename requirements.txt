@@ -1,6 +1,0 @@
-# Default stack (base + vision + ASR).
--r requirements/vision.txt
--r requirements/asr.txt
-
-# SO-101 arm control: install in a separate environment due to av conflicts.
-# pip install -r requirements/arm.txt
