@@ -36,6 +36,8 @@ from .services.router import RouterService
 from .services.tts import VoiceVoxService
 from .services.vision import VisionService, VisionFrame
 from .services.asr import ASRService
+from .services.command_executor import CommandExecutor
+from .services.calibration import ArmCalibration
 from .state import AppState
 
 import cv2
@@ -119,7 +121,12 @@ class TeachArmContext:
         )
         self.vision = VisionService(settings)
         self.calibration_path = settings.config_dir / "arm_calibration.json"
-        self.calibration = self._load_json(self.calibration_path)
+        self.calibration_data = self._load_json(self.calibration_path)
+        
+        # Initialize command executor with calibration support
+        self.calibration = ArmCalibration.from_file(self.calibration_path)
+        self.command_executor = CommandExecutor(self.arm, self.calibration)
+        
         self.offload_calibration_requested = False
         self.offload_reset_requested = False
 
@@ -453,7 +460,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         region: Optional[Region], event: str
     ) -> dict:
         if not region:
-            return {"region": None, "dialogue": None}
+            return {
+                "region": None,
+                "dialogue": None,
+                "executed_commands": [],
+                "command_errors": [],
+            }
         ctx.state.last_region = region.id
         dialogue = await ctx.dialogue.on_region_event(
             region=region,
@@ -467,6 +479,26 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             audio = await ctx.tts.synthesize(dialogue.text)
         if audio is None and dialogue.text:
             logger.info("Audio synthesis skipped for text '%s'", dialogue.text)
+        
+        # Execute commands from dialogue response
+        executed_commands, command_errors = await ctx.command_executor.execute_commands(
+            dialogue.commands
+        )
+        
+        # Convert executed commands to serializable format
+        executed_cmds_list = [{"type": cmd.type.value, "region_id": cmd.region_id} 
+                              for cmd in executed_commands]
+        
+        # Convert command errors to serializable format
+        cmd_errors_list = [
+            {
+                "command": {"type": err.command.type.value, "region_id": err.command.region_id},
+                "code": err.code.value,
+                "detail": err.detail,
+            }
+            for err in command_errors
+        ]
+        
         return {
             "region": {"id": region.id, "type": region.type},
             "dialogue": {
@@ -478,6 +510,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "deepseek_time_ms": dialogue.deepseek_time_ms,
             },
             "audio_path": str(audio) if audio else None,
+            "executed_commands": executed_cmds_list,
+            "command_errors": cmd_errors_list,
         }
 
     @app.post("/api/events/pointer")
@@ -678,6 +712,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.post("/api/arm/safe_pose")
     async def arm_safe_pose() -> dict:
         await ctx.arm.go_safe_pose()
+        return {"status": "ok"}
+
+    @app.post("/api/arm/init_pose")
+    async def arm_init_pose() -> dict:
+        await ctx.arm.go_init_pose()
         return {"status": "ok"}
 
     @app.get("/api/state")
