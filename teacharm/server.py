@@ -120,7 +120,16 @@ class TeachArmContext:
             baudrate=settings.so101_baudrate,
         )
         self.vision = VisionService(settings)
-        self.calibration_path = settings.config_dir / "arm_calibration.json"
+        
+        # Determine calibration path: LeRobot official first, then fallback
+        if settings.so101_calibration_path and Path(settings.so101_calibration_path).exists():
+            self.calibration_path = Path(settings.so101_calibration_path)
+            logger.info(f"Using LeRobot calibration: {self.calibration_path}")
+        else:
+            self.calibration_path = settings.config_dir / "arm_calibration.json"
+            if settings.so101_calibration_path:
+                logger.warning(f"LeRobot calibration not found: {settings.so101_calibration_path}, falling back to {self.calibration_path}")
+        
         self.calibration_data = self._load_json(self.calibration_path)
         
         # Initialize command executor with calibration support
@@ -700,24 +709,45 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.post("/api/arm/move")
     async def arm_move(payload: ArmMovePayload) -> dict:
-        command = ArmCommand(
-            x=payload.x,
-            y=payload.y,
-            z=payload.z,
-            speed=payload.speed,
-        )
-        await ctx.arm.move_to(command)
-        return {"status": "moving", "target": command.__dict__}
+        try:
+            command = ArmCommand(
+                x=payload.x,
+                y=payload.y,
+                z=payload.z,
+                speed=payload.speed,
+            )
+            await ctx.arm.move_to(command)
+            return {"status": "moving", "target": command.__dict__}
+        except RuntimeError as exc:
+            logger.warning("ARM move error: %s", exc)
+            return {"status": "error", "code": "E_ARM", "detail": str(exc)}
+        except Exception as exc:
+            logger.error("ARM move unexpected error: %s", exc)
+            return {"status": "error", "code": "E_ARM", "detail": str(exc)}
 
     @app.post("/api/arm/safe_pose")
     async def arm_safe_pose() -> dict:
-        await ctx.arm.go_safe_pose()
-        return {"status": "ok"}
+        try:
+            await ctx.arm.go_safe_pose()
+            return {"status": "ok"}
+        except RuntimeError as exc:
+            logger.warning("ARM safe_pose error: %s", exc)
+            return {"status": "error", "code": "E_ARM", "detail": str(exc)}
+        except Exception as exc:
+            logger.error("ARM safe_pose unexpected error: %s", exc)
+            return {"status": "error", "code": "E_ARM", "detail": str(exc)}
 
     @app.post("/api/arm/init_pose")
     async def arm_init_pose() -> dict:
-        await ctx.arm.go_init_pose()
-        return {"status": "ok"}
+        try:
+            await ctx.arm.go_init_pose()
+            return {"status": "ok"}
+        except RuntimeError as exc:
+            logger.warning("ARM init_pose error: %s", exc)
+            return {"status": "error", "code": "E_ARM", "detail": str(exc)}
+        except Exception as exc:
+            logger.error("ARM init_pose unexpected error: %s", exc)
+            return {"status": "error", "code": "E_ARM", "detail": str(exc)}
 
     @app.get("/api/state")
     async def get_state() -> dict:
