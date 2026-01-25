@@ -80,9 +80,27 @@ class Settings(BaseSettings):
         description="Baudrate for SO-101 motor communication",
     )
 
+    so101_calibration_path: Optional[Path] = Field(
+        default=None,
+        env="SO101_CALIBRATION_PATH",
+        description="Path to LeRobot official calibration JSON (e.g., ~/.cache/huggingface/lerobot/calibration/robots/so101_follower/calibration.json)",
+    )
+
     allowed_origins: List[str] = Field(
         default_factory=lambda: ["*"],
         env="TEACHARM_ALLOWED_ORIGINS",
+    )
+
+    # Server mode and port
+    server_mode: str = Field(
+        default="audio",
+        env="SERVER_MODE",
+        description="'audio' (Vision/ASR/TTS) or 'arm' (LeRobot/ARM_SERVICE)",
+    )
+    server_port: int = Field(
+        default=8000,
+        env="SERVER_PORT",
+        description="HTTP port for this server instance",
     )
 
     class Config:
