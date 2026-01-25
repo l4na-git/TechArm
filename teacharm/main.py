@@ -19,7 +19,13 @@ except ImportError:  # fallback when executed as a script
 def run() -> None:
     settings = load_settings()
     app = create_app(settings=settings)
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    mode = settings.server_mode.lower()
+    port = settings.server_port
+    print(f"\n🚀 TeachArm Server")
+    print(f"   Mode: {mode.upper()} (audio: Vision/ASR/TTS | arm: LeRobot/ARM)")
+    print(f"   Port: {port}")
+    print(f"   Docs: http://0.0.0.0:{port}/docs\n")
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
 
 if __name__ == "__main__":
