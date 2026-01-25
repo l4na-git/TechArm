@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any, Dict, Optional
 
 import httpx
@@ -140,7 +141,9 @@ class DeepSeekService:
             response.raise_for_status()
             data = response.json()
             content = data["choices"][0]["message"]["content"]
-            return content.strip()
+            # Strip any XML-like tags from model output.
+            cleaned = re.sub(r"<[^>]+>", "", content)
+            return cleaned.strip()
 
     def _build_system_prompt(self, request: GenerationRequest) -> str:
         """Build system prompt for DeepSeek."""
