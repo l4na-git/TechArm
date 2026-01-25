@@ -344,6 +344,31 @@ class ArmService:
         else:
             logger.warning("Safe pose not properly configured (missing angles or xyz)")
 
+    async def go_init_pose(self, speed: float = 0.2) -> None:
+        """Move arm to configured init pose (elbow-up demo pose).
+        
+        Init pose is the demo base position where the arm waits for interaction.
+        Can be defined as joint angles (preferred) or Cartesian coordinates.
+        """
+        await self.ensure_calibrated()
+        pose = self._config.get("init_pose")
+        if not pose:
+            logger.warning("Init pose not configured")
+            return
+        
+        if pose.get("type") == "joint_angles" and pose.get("angles"):
+            # Preferred: Use joint angle specification
+            await self.move_joints(
+                JointCommand(angles=pose["angles"], speed=speed)
+            )
+        elif pose.get("x") is not None:
+            # Legacy: Use Cartesian coordinates (requires IK)
+            await self.move_to(
+                ArmCommand(x=pose["x"], y=pose["y"], z=pose["z"])
+            )
+        else:
+            logger.warning("Init pose not properly configured (missing angles or xyz)")
+
     async def get_joint_positions(self) -> List[float]:
         """Read current joint angles from motors.
         
