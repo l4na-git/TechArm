@@ -7,6 +7,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import inspect
 import sys
 from pathlib import Path
@@ -42,6 +43,27 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _maybe_await(result: object) -> object:
+    if inspect.isawaitable(result):
+        return asyncio.run(result)
+    return result
+
+
+def _read_model_number(bus: FeetechMotorsBus, motor_id: int) -> int | None:
+    read = getattr(bus, "read", None)
+    if read is None:
+        return None
+    for args in (("Model_Number", motor_id), ("Model_Number",)):
+        try:
+            value = _maybe_await(read(*args))
+            return int(value) if value is not None else None
+        except TypeError:
+            continue
+        except Exception:
+            return None
+    return None
+
+
 def main() -> None:
     args = _build_parser().parse_args()
     settings = load_settings()
@@ -63,13 +85,19 @@ def main() -> None:
     try:
         bus.connect(handshake=False)  # Avoid handshake for unstable motors
         found = []
-        for motor_id in range(1, 254):
+        for motor_id in list(range(0, 254)) + [254]:
             try:
                 if bus.ping(motor_id):
                     found.append(motor_id)
             except Exception:
                 pass
         print("FOUND:", found)
+        if found:
+            model_numbers = {
+                motor_id: _read_model_number(bus, motor_id)
+                for motor_id in found
+            }
+            print("MODEL_NUMBER:", model_numbers)
     finally:
         for fn in ("disconnect", "close"):
             if hasattr(bus, fn):
