@@ -122,13 +122,14 @@ class TeachArmContext:
         self.vision = VisionService(settings)
         
         # Determine calibration path: LeRobot official first, then fallback
-        if settings.so101_calibration_path and Path(settings.so101_calibration_path).exists():
-            self.calibration_path = Path(settings.so101_calibration_path)
-            logger.info(f"Using LeRobot calibration: {self.calibration_path}")
-        else:
-            self.calibration_path = settings.config_dir / "arm_calibration.json"
-            if settings.so101_calibration_path:
-                logger.warning(f"LeRobot calibration not found: {settings.so101_calibration_path}, falling back to {self.calibration_path}")
+        self.calibration_path = settings.config_dir / "arm_calibration.json"
+        if settings.so101_calibration_path:
+            calib_path = Path(settings.so101_calibration_path)
+            if calib_path.is_file():
+                self.calibration_path = calib_path
+                logger.info(f"Using LeRobot calibration: {self.calibration_path}")
+            else:
+                logger.warning(f"LeRobot calibration not found or not a file: {settings.so101_calibration_path}, using default: {self.calibration_path}")
         
         self.calibration_data = self._load_json(self.calibration_path)
         
