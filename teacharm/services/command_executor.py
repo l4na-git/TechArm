@@ -74,7 +74,12 @@ class CommandExecutor:
     - Thread-safe for async contexts
     """
 
-    def __init__(self, arm_service: Any, calibration: Any = None):
+    def __init__(
+        self,
+        arm_service: Any,
+        calibration: Any = None,
+        materials: Any = None,
+    ):
         """Initialize command executor.
         
         Args:
@@ -83,6 +88,7 @@ class CommandExecutor:
         """
         self.arm = arm_service
         self.calibration = calibration  # Optional, for coordinate transforms
+        self.materials = materials
         self._state = CommandExecutorState()
         self._lock = asyncio.Lock()
 
@@ -158,18 +164,33 @@ class CommandExecutor:
             
             return normalized
         
-        # Handle list format (already normalized)
+        # Handle list format (already normalized or script-style)
         if isinstance(commands_input, list):
             for item in commands_input:
-                if isinstance(item, dict) and "type" in item:
+                if not isinstance(item, dict):
+                    logger.warning("Skipping malformed command item: %s", item)
+                    continue
+
+                if "type" in item:
                     try:
                         cmd_type = CommandType(item["type"])
                         region_id = item.get("region_id")
                         normalized.append(Command(type=cmd_type, region_id=region_id))
                     except ValueError:
-                        logger.warning("Skipping unknown command type: %s", item.get("type"))
-                else:
-                    logger.warning("Skipping malformed command item: %s", item)
+                        logger.warning(
+                            "Skipping unknown command type: %s", item.get("type")
+                        )
+                    continue
+
+                for key, value in item.items():
+                    try:
+                        cmd_type = CommandType(key)
+                    except ValueError:
+                        continue
+                    if cmd_type == CommandType.ARM_POINT_REGION and isinstance(value, str):
+                        normalized.append(Command(type=cmd_type, region_id=value))
+                    elif value is True:
+                        normalized.append(Command(type=cmd_type))
             
             return normalized
         
@@ -269,11 +290,40 @@ class CommandExecutor:
         if not self.calibration:
             raise ValueError("ARM_POINT_REGION: Calibration service not available")
         
-        # TODO: Require region/material context in __init__ for region lookup
-        # For now, raise not-implemented
-        raise ValueError(
-            f"ARM_POINT_REGION: Not yet implemented - requires material context (region_id={cmd.region_id})"
-        )
+        if not self.materials:
+            raise ValueError("ARM_POINT_REGION: Materials repository not available")
+
+        material = self.materials.current
+        region = material.get_region(cmd.region_id) if material else None
+        if not region:
+            for mat in self.materials.list_materials().values():
+                region = mat.get_region(cmd.region_id)
+                if region:
+                    break
+        if not region:
+            raise ValueError(f"ARM_POINT_REGION: region not found ({cmd.region_id})")
+
+        u = region.bbox.x + (region.bbox.w / 2)
+        v = region.bbox.y + (region.bbox.h / 2)
+        try:
+            x, y, z = self.calibration.uv_to_xyz(u, v)
+            logger.info(
+                "ARM_POINT_REGION: %s center (%.3f, %.3f) -> (%.1f, %.1f, %.1f) mm",
+                cmd.region_id,
+                u,
+                v,
+                x,
+                y,
+                z,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"ARM_POINT_REGION: Calibration transform failed - {exc}"
+            )
+
+        from .arm import ArmCommand
+        cmd_arm = ArmCommand(x=x, y=y, z=z, speed=0.2)
+        await self.arm.move_to(cmd_arm)
 
     def reset(self) -> None:
         """Reset executor state (for testing/debugging)."""

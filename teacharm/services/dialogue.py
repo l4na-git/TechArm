@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from ..config import Settings
 from ..logger import get_logger
 from ..materials import Region
+from ..mapping import MaterialRepository
 from ..scripts import ScriptSet
 from .deepseek import DeepSeekService
 from .router import RouterInput, RouterService
@@ -35,11 +36,13 @@ class DialogueService:
         scripts: ScriptSet,
         router: RouterService,
         deepseek: DeepSeekService,
+        materials: MaterialRepository,
     ):
         self._settings = settings
         self._scripts = scripts
         self._router = router
         self._deepseek = deepseek
+        self._materials = materials
         self._last_response: Optional[DialogueResponse] = None
         self._last_region_id: Optional[str] = None
 
@@ -188,6 +191,24 @@ class DialogueService:
                 router_fallback=router_output.fallback_used,
             )
         elif action == "pointing_unknown":
+            selected = await self._select_region_by_llm(
+                material_id, text
+            )
+            if selected:
+                response = await self._generate_with_deepseek(
+                    selected,
+                    material_id or "",
+                    "hint",
+                    router_output,
+                    pointer_coords=pointer_coords,
+                    user_speech=text,
+                )
+                response.commands = [
+                    {"ARM_POINT_REGION": selected.id}
+                ] + response.commands
+                if prepend_point_ack:
+                    self._prepend_point_ack(response, selected)
+                return response
             message = (
                 "ごめんね。どこを指しているか分からなかったよ。もう一度教えて"
             )
@@ -204,6 +225,24 @@ class DialogueService:
             reason = args.get("reason", "")
             return await self._reject_request(reason, router_output)
         elif action == "clarify":
+            selected = await self._select_region_by_llm(
+                material_id, text
+            )
+            if selected:
+                response = await self._generate_with_deepseek(
+                    selected,
+                    material_id or "",
+                    "hint",
+                    router_output,
+                    pointer_coords=pointer_coords,
+                    user_speech=text,
+                )
+                response.commands = [
+                    {"ARM_POINT_REGION": selected.id}
+                ] + response.commands
+                if prepend_point_ack:
+                    self._prepend_point_ack(response, selected)
+                return response
             question = args.get("question", "どの問題のことか教えてね。")
             return DialogueResponse(
                 text=question,
@@ -387,6 +426,42 @@ class DialogueService:
         normalized = re.sub(r"[\s、。,.!！?？ー-]", "", text)
         terms = self._scripts.intent.greeting_terms
         return any(normalized == word for word in terms)
+
+    async def _select_region_by_llm(
+        self, material_id: Optional[str], user_text: str
+    ) -> Optional[Region]:
+        if not user_text:
+            return None
+        material = self._materials.current
+        if material_id:
+            material = self._materials.list_materials().get(material_id)
+        if not material:
+            return None
+
+        candidates = []
+        for region in material.regions:
+            label = region.label or region.id
+            text = (
+                region.extracted_text
+                or getattr(region, "text", None)
+                or ""
+            )
+            snippet = " ".join(text.split())[:80]
+            candidates.append(
+                {
+                    "id": region.id,
+                    "label": label,
+                    "type": region.type,
+                    "text": snippet,
+                }
+            )
+
+        region_id = await self._deepseek.select_region_id(
+            material.material_id, user_text, candidates
+        )
+        if not region_id:
+            return None
+        return material.get_region(region_id)
 
     def _build_candidates(
         self, regions: List[Optional[Region]]

@@ -109,7 +109,11 @@ class TeachArmContext:
         self.router = RouterService(settings)
         self.deepseek = DeepSeekService(settings)
         self.dialogue = DialogueService(
-            settings, self.scripts, self.router, self.deepseek
+            settings,
+            self.scripts,
+            self.router,
+            self.deepseek,
+            self.repository,
         )
         self.asr = ASRService(settings)
         self.tts = VoiceVoxService(settings)
@@ -135,7 +139,9 @@ class TeachArmContext:
         
         # Initialize command executor with calibration support
         self.calibration = ArmCalibration.from_file(self.calibration_path)
-        self.command_executor = CommandExecutor(self.arm, self.calibration)
+        self.command_executor = CommandExecutor(
+            self.arm, self.calibration, self.repository
+        )
         
         self.offload_calibration_requested = False
         self.offload_reset_requested = False
@@ -143,7 +149,11 @@ class TeachArmContext:
     def reload_scripts(self) -> None:
         self.scripts = load_scripts(self.scripts_path)
         self.dialogue = DialogueService(
-            self.settings, self.scripts, self.router, self.deepseek
+            self.settings,
+            self.scripts,
+            self.router,
+            self.deepseek,
+            self.repository,
         )
 
     def _load_json(self, path: Path) -> dict:

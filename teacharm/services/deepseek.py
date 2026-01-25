@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -141,9 +142,7 @@ class DeepSeekService:
             response.raise_for_status()
             data = response.json()
             content = data["choices"][0]["message"]["content"]
-            # Strip any XML-like tags from model output.
-            cleaned = re.sub(r"<[^>]+>", "", content)
-            cleaned = self._normalize_ranges(cleaned)
+            cleaned = self._sanitize_output(content)
             return cleaned.strip()
 
     def _build_system_prompt(self, request: GenerationRequest) -> str:
@@ -244,6 +243,109 @@ class DeepSeekService:
             if isinstance(cmd, dict) and "SAY" in cmd:
                 return cmd["SAY"]
         return None
+
+    async def select_region_id(
+        self,
+        material_id: str,
+        user_speech: str,
+        candidates: List[Dict[str, str]],
+    ) -> Optional[str]:
+        """Select the most relevant region id from candidates."""
+        if not user_speech or not candidates:
+            return None
+
+        system_prompt = (
+            "You are a classifier. Choose the most relevant region id "
+            "for the user's request. Return JSON only."
+        )
+        candidate_lines = []
+        for candidate in candidates:
+            text = candidate.get("text", "")
+            candidate_lines.append(
+                f"- id: {candidate['id']}, label: {candidate['label']}, "
+                f"type: {candidate['type']}, text: {text}"
+            )
+        user_message = (
+            f"material_id: {material_id}\n"
+            f"user: {user_speech}\n"
+            "candidates:\n"
+            + "\n".join(candidate_lines)
+            + "\n\n"
+            "Return JSON only in this format:\n"
+            '{"region_id": "..." } or {"region_id": null}'
+        )
+
+        try:
+            content = await self._call_deepseek_raw(
+                system_prompt,
+                user_message,
+                temperature=0.0,
+                max_tokens=80,
+            )
+        except Exception as exc:
+            logger.error("DeepSeek region selection failed: %s", exc)
+            return None
+
+        return self._parse_region_id(content, candidates)
+
+    async def _call_deepseek_raw(
+        self,
+        system_prompt: str,
+        user_message: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        payload = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(
+                f"{self._base_url}/v1/chat/completions",
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+            content = data["choices"][0]["message"]["content"]
+            return self._sanitize_output(content)
+
+    @staticmethod
+    def _parse_region_id(
+        content: str, candidates: List[Dict[str, str]]
+    ) -> Optional[str]:
+        cleaned = content.strip()
+        candidate_ids = {c["id"] for c in candidates}
+        label_to_id = {c["label"]: c["id"] for c in candidates}
+
+        try:
+            data = json.loads(cleaned)
+            region_id = data.get("region_id")
+            if region_id in candidate_ids:
+                return region_id
+            if isinstance(region_id, str) and region_id in label_to_id:
+                return label_to_id[region_id]
+        except json.JSONDecodeError:
+            pass
+
+        for candidate_id in candidate_ids:
+            if candidate_id in cleaned:
+                return candidate_id
+        for label, region_id in label_to_id.items():
+            if label in cleaned:
+                return region_id
+        return None
+
+    @staticmethod
+    def _sanitize_output(content: str) -> str:
+        """Strip tags and normalize range expressions."""
+        cleaned = re.sub(r"<[^>]+>", "", content)
+        return DeepSeekService._normalize_ranges(cleaned).strip()
 
     def get_stats(self) -> Dict[str, Any]:
         """Return statistics for monitoring."""

@@ -19,6 +19,7 @@ print("\n[Test 1] Importing core modules...")
 try:
     from teacharm.config import load_settings
     from teacharm.materials import load_materials
+    from teacharm.mapping import MaterialRepository
     from teacharm.scripts import load_scripts
     print("✓ Core modules imported successfully")
 except Exception as e:
@@ -79,7 +80,8 @@ print("\n[Test 6] Initializing services...")
 try:
     router = RouterService(settings)
     deepseek = DeepSeekService(settings)
-    dialogue = DialogueService(settings, scripts, router, deepseek)
+    repository = MaterialRepository(materials)
+    dialogue = DialogueService(settings, scripts, router, deepseek, repository)
     print("✓ Services initialized successfully")
     print(f"  - Router stats: {router.get_stats()}")
     print(f"  - DeepSeek stats: {deepseek.get_stats()}")
