@@ -459,6 +459,12 @@ class DialogueService:
         region_id = await self._deepseek.select_region_id(
             material.material_id, user_text, candidates
         )
+        logger.info(
+            "LLM region selection: material=%s, user_text=%s, region_id=%s",
+            material.material_id,
+            user_text,
+            region_id,
+        )
         if not region_id:
             return None
         return material.get_region(region_id)
