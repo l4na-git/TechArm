@@ -684,7 +684,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             require_pointing=True,
             material_visible=material_visible,
             pointer_coords=pointer_coords,
-            prepend_point_ack=True,
+            prepend_point_ack=bool(pointer_coords and current_region),
         )
 
         audio_path = None
