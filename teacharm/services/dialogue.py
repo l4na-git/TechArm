@@ -203,8 +203,13 @@ class DialogueService:
                     pointer_coords=pointer_coords,
                     user_speech=text,
                 )
+                logger.info(
+                    "POINT command: region_id=%s anchor=center",
+                    selected.id,
+                )
                 response.commands = [
-                    {"ARM_POINT_REGION": selected.id}
+                    {"POINT": {"region_id": selected.id, "anchor": "center"}},
+                    {"ARM_POINT_REGION": selected.id},
                 ] + response.commands
                 if prepend_point_ack:
                     self._prepend_point_ack(response, selected)
@@ -237,8 +242,13 @@ class DialogueService:
                     pointer_coords=pointer_coords,
                     user_speech=text,
                 )
+                logger.info(
+                    "POINT command: region_id=%s anchor=center",
+                    selected.id,
+                )
                 response.commands = [
-                    {"ARM_POINT_REGION": selected.id}
+                    {"POINT": {"region_id": selected.id, "anchor": "center"}},
+                    {"ARM_POINT_REGION": selected.id},
                 ] + response.commands
                 if prepend_point_ack:
                     self._prepend_point_ack(response, selected)
