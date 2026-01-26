@@ -56,7 +56,7 @@ class DeepSeekService:
     def __init__(self, settings: Settings):
         self._base_url = settings.ollama_base_url
         self._model = settings.ollama_model
-        self._timeout = 15.0
+        self._timeout = 45.0
         self._total_requests = 0
         self._total_time_ms = 0
 
