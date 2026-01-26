@@ -289,6 +289,54 @@ class DeepSeekService:
 
         return self._parse_region_id(content, candidates)
 
+    async def select_paragraph_id(
+        self,
+        material_id: str,
+        user_speech: str,
+        problem_label: str,
+        problem_text: str,
+        candidates: List[Dict[str, str]],
+    ) -> Optional[str]:
+        """Select the most relevant paragraph id for a given problem."""
+        if not user_speech or not candidates:
+            return None
+
+        system_prompt = (
+            "You are a classifier. Choose the most relevant paragraph id "
+            "to read for the given problem. Return JSON only."
+        )
+        candidate_lines = []
+        for candidate in candidates:
+            text = candidate.get("text", "")
+            candidate_lines.append(
+                f"- id: {candidate['id']}, label: {candidate['label']}, "
+                f"type: {candidate['type']}, text: {text}"
+            )
+        user_message = (
+            f"material_id: {material_id}\n"
+            f"problem_label: {problem_label}\n"
+            f"problem_text: {problem_text}\n"
+            f"user: {user_speech}\n"
+            "paragraph_candidates:\n"
+            + "\n".join(candidate_lines)
+            + "\n\n"
+            "Return JSON only in this format:\n"
+            '{"region_id": "..." } or {"region_id": null}'
+        )
+
+        try:
+            content = await self._call_deepseek_raw(
+                system_prompt,
+                user_message,
+                temperature=0.0,
+                max_tokens=80,
+            )
+        except Exception as exc:
+            logger.error("DeepSeek paragraph selection failed: %s", exc)
+            return None
+
+        return self._parse_region_id(content, candidates)
+
     async def _call_deepseek_raw(
         self,
         system_prompt: str,

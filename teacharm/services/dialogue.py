@@ -167,6 +167,9 @@ class DialogueService:
             )
             if prepend_point_ack:
                 self._prepend_point_ack(response, current_region)
+            await self._maybe_append_paragraph_point(
+                response, current_region, material_id, text
+            )
             return response
         elif action == "generate_explanation" and current_region:
             style = args.get("style", "hint")
@@ -180,6 +183,9 @@ class DialogueService:
             )
             if prepend_point_ack:
                 self._prepend_point_ack(response, current_region)
+            await self._maybe_append_paragraph_point(
+                response, current_region, material_id, text
+            )
             return response
         elif action == "material_not_visible":
             message = "ごめんね。教材が見えないよ。教材を写してね"
@@ -351,6 +357,43 @@ class DialogueService:
         response.text = f"{ack} {response.text}".strip()
         response.commands = [{"SAY": ack}] + response.commands
 
+    async def _maybe_append_paragraph_point(
+        self,
+        response: DialogueResponse,
+        current_region: Region,
+        material_id: Optional[str],
+        user_text: str,
+    ) -> None:
+        """Attach point commands only when user asks where to look."""
+        if not self._needs_pointing_guidance(user_text):
+            return
+
+        target_region = await self._select_paragraph_target(
+            material_id, current_region, user_text
+        )
+        if not target_region:
+            return
+
+        if not response.commands:
+            response.commands = []
+        has_point = any("POINT" in cmd for cmd in response.commands)
+        has_arm_point = any(
+            "ARM_POINT_REGION" in cmd for cmd in response.commands
+        )
+        if not has_point:
+            response.commands.insert(
+                0,
+                {"POINT": {"region_id": target_region.id, "anchor": "center"}},
+            )
+        if not has_arm_point:
+            response.commands.insert(
+                1, {"ARM_POINT_REGION": target_region.id}
+            )
+        logger.info(
+            "POINT command: region_id=%s anchor=center",
+            target_region.id,
+        )
+
     def _repeat_last(self, router_output: Any) -> DialogueResponse:
         """Repeat the last response."""
         if not self._last_response:
@@ -478,6 +521,84 @@ class DialogueService:
         if not region_id:
             return None
         return material.get_region(region_id)
+
+    async def _select_paragraph_target(
+        self,
+        material_id: Optional[str],
+        current_region: Region,
+        user_text: str,
+    ) -> Optional[Region]:
+        if current_region.type == "paragraph":
+            return current_region
+
+        material = self._materials.current
+        if material_id:
+            material = self._materials.list_materials().get(material_id)
+        if not material:
+            return None
+
+        candidates = []
+        for region in material.regions:
+            if region.type != "paragraph":
+                continue
+            label = region.label or region.id
+            text = (
+                region.extracted_text
+                or getattr(region, "text", None)
+                or ""
+            )
+            snippet = " ".join(text.split())[:80]
+            candidates.append(
+                {
+                    "id": region.id,
+                    "label": label,
+                    "type": region.type,
+                    "text": snippet,
+                }
+            )
+        if not candidates:
+            return None
+
+        problem_label = current_region.label or current_region.id
+        problem_text = (
+            current_region.extracted_text
+            or getattr(current_region, "text", None)
+            or ""
+        )
+        region_id = await self._deepseek.select_paragraph_id(
+            material.material_id,
+            user_text,
+            problem_label,
+            problem_text,
+            candidates,
+        )
+        logger.info(
+            "LLM paragraph selection: material=%s, problem=%s, region_id=%s",
+            material.material_id,
+            current_region.id,
+            region_id,
+        )
+        if not region_id:
+            return None
+        return material.get_region(region_id)
+
+    @staticmethod
+    def _needs_pointing_guidance(user_text: str) -> bool:
+        text = user_text.strip()
+        if not text:
+            return False
+        keywords = [
+            "どこを見れば",
+            "どこを見たら",
+            "どこを読めば",
+            "どの段落",
+            "どの文",
+            "どの文章",
+            "どれを見れば",
+            "どれを読めば",
+            "どのあたり",
+        ]
+        return any(keyword in text for keyword in keywords)
 
     def _build_candidates(
         self, regions: List[Optional[Region]]
