@@ -183,7 +183,9 @@ class DialogueService:
             )
             if prepend_point_ack:
                 self._prepend_point_ack(response, current_region)
-            await self._maybe_append_paragraph_point(
+            
+            # Add POINT/ARM if asking for location & ref region exists
+            await self._maybe_append_reference_point(
                 response, current_region, material_id, text
             )
             return response
@@ -326,12 +328,18 @@ class DialogueService:
         user_speech: Optional[str] = None,
     ) -> DialogueResponse:
         """Generate explanation using DeepSeek."""
+        # Resolve reference region if any
+        reference_region = self.resolve_reference_region(
+            region, material_id, prefer_hint=False
+        )
+        
         result = await self._deepseek.generate_explanation(
             region,
             material_id,
             style,
             pointer_coords=pointer_coords,
             user_speech=user_speech,
+            reference_region=reference_region,
         )
 
         response = DialogueResponse(
@@ -599,6 +607,134 @@ class DialogueService:
             "どのあたり",
         ]
         return any(keyword in text for keyword in keywords)
+
+    @staticmethod
+    def should_emit_point(user_text: str) -> bool:
+        """Check if user is asking for location guidance.
+        
+        Returns True if user text contains location keywords that indicate
+        they want to know WHERE to look (as opposed to generic explanation).
+        """
+        text = user_text.strip()
+        if not text:
+            return False
+        
+        location_keywords = [
+            "どこ",  # where
+            "どれ",  # which
+            "どの段落",  # which paragraph
+            "どの文",  # which sentence
+            "どこ見れば",  # where to look
+            "どこ読めば",  # where to read
+            "どこを見れば",
+            "どこを見たら",
+            "どこを読めば",
+            "どこを読んだら",
+            "どの文章",
+            "どれを見れば",
+            "どれを読めば",
+            "どのあたり",
+            "どこのあたり",
+        ]
+        return any(keyword in text for keyword in location_keywords)
+
+    def resolve_reference_region(
+        self,
+        current_region: Region,
+        material_id: str,
+        prefer_hint: bool = False,
+    ) -> Optional[Region]:
+        """Resolve reference region from current region's refs.
+        
+        Args:
+            current_region: The current region that may have refs_* fields
+            material_id: Material ID to look up regions
+            prefer_hint: If True, prefer refs_hint over refs_explain
+        
+        Returns:
+            Reference Region if found, None otherwise
+        """
+        if not material_id or not current_region:
+            return None
+        
+        material = self._materials.list_materials().get(material_id)
+        if not material:
+            return None
+        
+        # Decide which refs list to use
+        refs_list: List[str] = []
+        if prefer_hint:
+            refs_list = getattr(current_region, "refs_hint", [])
+            if not refs_list:
+                refs_list = getattr(current_region, "refs_explain", [])
+        else:
+            refs_list = getattr(current_region, "refs_explain", [])
+            if not refs_list:
+                refs_list = getattr(current_region, "refs_hint", [])
+        
+        if not refs_list:
+            return None
+        
+        # Try to get the first reference region that exists
+        for ref_id in refs_list:
+            ref_region = material.get_region(ref_id)
+            if ref_region:
+                logger.info(
+                    "Resolved reference: current=%s -> ref=%s",
+                    current_region.id,
+                    ref_region.id,
+                )
+                return ref_region
+        
+        return None
+
+    async def _maybe_append_reference_point(
+        self,
+        response: DialogueResponse,
+        current_region: Region,
+        material_id: Optional[str],
+        user_text: str,
+    ) -> None:
+        """Attach point commands only when user asks for location guidance.
+        
+        Uses resolve_reference_region to get the target, and only adds
+        POINT/ARM_POINT_REGION if should_emit_point() is True.
+        """
+        if not self.should_emit_point(user_text):
+            # User is not asking for location, don't add point commands
+            return
+
+        # Try to resolve reference region
+        if not current_region or not material_id:
+            return
+            
+        target_region = self.resolve_reference_region(
+            current_region, material_id, prefer_hint=False
+        )
+        if not target_region:
+            return
+
+        if not response.commands:
+            response.commands = []
+        
+        # Remove existing POINT/ARM commands if any
+        response.commands = [
+            cmd for cmd in response.commands
+            if "POINT" not in cmd and "ARM_POINT_REGION" not in cmd
+        ]
+        
+        # Add reference point commands at the beginning
+        response.commands.insert(
+            0,
+            {"POINT": {"region_id": target_region.id, "anchor": "center"}},
+        )
+        response.commands.insert(
+            1, {"ARM_POINT_REGION": target_region.id}
+        )
+        logger.info(
+            "Added reference POINT command: region_id=%s",
+            target_region.id,
+        )
 
     def _build_candidates(
         self, regions: List[Optional[Region]]

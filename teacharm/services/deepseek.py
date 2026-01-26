@@ -36,6 +36,8 @@ class GenerationRequest:
     region_bbox: Optional[Dict[str, float]] = None  # 領域範囲
     pdf_full_text: Optional[str] = None  # PDF全文
     user_speech: Optional[str] = None  # ユーザー発話テキスト
+    # 参照先情報
+    reference_region: Optional[Region] = None  # 参照先レジオン
 
 
 @dataclass
@@ -66,6 +68,7 @@ class DeepSeekService:
         pointer_coords: Optional[Dict[str, float]] = None,
         pdf_full_text: Optional[str] = None,
         user_speech: Optional[str] = None,
+        reference_region: Optional[Region] = None,
     ) -> GenerationResponse:
         """
         Generate a short explanation or hint for a region.
@@ -78,6 +81,7 @@ class DeepSeekService:
             pointer_coords: ポインター座標 {"x": 0.5, "y": 0.3}
             pdf_full_text: PDF全文テキスト（コンテキスト強化用）
             user_speech: ユーザー音声認識テキスト
+            reference_region: 参照先レジオン（参考文献）
         """
         import time
 
@@ -97,6 +101,7 @@ class DeepSeekService:
             region_bbox=region.bbox.dict() if region.bbox else None,
             pdf_full_text=pdf_full_text,
             user_speech=user_speech,
+            reference_region=reference_region,
         )
 
         try:
@@ -219,6 +224,21 @@ class DeepSeekService:
         # 既存スクリプト（参考情報）
         if request.script_on_point:
             parts.append(f"\n【参考: 既存の説明】\n{request.script_on_point}")
+        
+        # 参照先情報
+        if request.reference_region:
+            ref = request.reference_region
+            ref_label = ref.label or ref.id
+            ref_text = ref.extracted_text or ""
+            # テキストは最大200-400文字に短縮
+            if ref_text:
+                ref_text = ref_text[:300]
+            parts.append("\n【参照するとよい場所】")
+            parts.append(f"タイトル: {ref_label}")
+            parts.append(f"タイプ: {ref.type}")
+            if ref_text:
+                parts.append(f"内容: {ref_text}")
+            parts.append("この場所に触れながら説明すると、ユーザーは理解しやすくなります。")
         
         # ユーザー発話
         if request.user_speech:

@@ -41,6 +41,8 @@ class Region(BaseModel):
     on_point: List[str] = []
     on_help: List[str] = []
     extracted_text: Optional[str] = None  # PDF抽出テキスト
+    refs_hint: List[str] = []  # ヒント向け参照先（優先順）
+    refs_explain: List[str] = []  # 解説向け参照先（優先順）
 
 
 class Material(BaseModel):
@@ -91,7 +93,8 @@ def select_best_region(regions: Sequence[Region]) -> Optional[Region]:
 def load_materials(material_dir: Path) -> Dict[str, Material]:
     """Load all material JSON files from a directory."""
     materials: Dict[str, Material] = {}
-    for json_file in sorted(material_dir.glob("material_*.json")):  # material_*.json のみ
+    # Load material_*.json files only
+    for json_file in sorted(material_dir.glob("material_*.json")):
         with json_file.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
         material = Material(**data)
