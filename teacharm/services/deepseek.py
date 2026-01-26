@@ -395,9 +395,27 @@ class DeepSeekService:
 
     @staticmethod
     def _sanitize_output(content: str) -> str:
-        """Strip tags and normalize range expressions."""
+        """Strip tags and normalize range/symbol expressions."""
         cleaned = re.sub(r"<[^>]+>", "", content)
-        return DeepSeekService._normalize_ranges(cleaned).strip()
+        cleaned = DeepSeekService._normalize_ranges(cleaned)
+        cleaned = DeepSeekService._normalize_symbols(cleaned)
+        return cleaned.strip()
+
+    @staticmethod
+    def _normalize_symbols(text: str) -> str:
+        """Normalize common symbols to their spoken Japanese forms."""
+        replacements = {
+            "〇": "まる",
+            "○": "まる",
+            "△": "さんかく",
+            "▲": "さんかく",
+            "□": "しかく",
+            "■": "しかく",
+            "×": "ばつ",
+            "✕": "ばつ",
+            "✖": "ばつ",
+        }
+        return "".join(replacements.get(ch, ch) for ch in text)
 
     def get_stats(self) -> Dict[str, Any]:
         """Return statistics for monitoring."""
