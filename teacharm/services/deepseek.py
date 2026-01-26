@@ -158,9 +158,10 @@ class DeepSeekService:
 - 教材内容について、相手にわかりやすく説明する
 - 1〜2文で簡潔に答える
 - 次に何を見ればいいか、具体的なヒントを含める
+- 【重要】参照領域がある場合でも、見つからない場合でも、必ず何か答える
 
 制約:
-- 教材の範囲内のみ回答する
+- 教材の範囲内のみ回答する。わからなくても、何か答える。「説明できない」は禁止
 - 教材外の質問は丁寧に断り、学習に戻す
 - 個人情報は聞かない、答えない
 - 答えを直接言わず、考え方や手がかりを示す
@@ -225,7 +226,7 @@ class DeepSeekService:
         if request.script_on_point:
             parts.append(f"\n【参考: 既存の説明】\n{request.script_on_point}")
         
-        # 参照先情報
+        # 参照先情報（オプション。参考になる場合は活用してよい）
         if request.reference_region:
             ref = request.reference_region
             ref_label = ref.label or ref.id
@@ -233,12 +234,12 @@ class DeepSeekService:
             # テキストは最大200-400文字に短縮
             if ref_text:
                 ref_text = ref_text[:300]
-            parts.append("\n【参照するとよい場所】")
+            parts.append("\n【参考: 参照するとよい場所（オプション）】")
             parts.append(f"タイトル: {ref_label}")
             parts.append(f"タイプ: {ref.type}")
             if ref_text:
                 parts.append(f"内容: {ref_text}")
-            parts.append("この場所に触れながら説明すると、ユーザーは理解しやすくなります。")
+            parts.append("※ この情報は補助的です。見つからなくても、教材から説明してください。")
         
         # ユーザー発話
         if request.user_speech:
