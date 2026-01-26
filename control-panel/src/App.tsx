@@ -33,6 +33,9 @@ type Region = {
   bbox: BoundingBox;
   on_point: string[];
   on_help: string[];
+  extracted_text?: string;
+  refs_hint?: string[];
+  refs_explain?: string[];
 };
 
 type MaterialData = {
@@ -1323,6 +1326,39 @@ export default function App() {
                                     })
                                   }
                                   placeholder="例: Q1_HINT"
+                                />
+                              </label>
+                              <hr style={{ margin: "12px 0", opacity: 0.3 }} />
+                              <label>
+                                <span>参照先（ヒント用）refs_hint (カンマ区切り)</span>
+                                <input
+                                  type="text"
+                                  value={(region.refs_hint || []).join(", ")}
+                                  onChange={(e) =>
+                                    updateRegion(idx, {
+                                      refs_hint: e.target.value
+                                        .split(",")
+                                        .map((s) => s.trim())
+                                        .filter((s) => s),
+                                    })
+                                  }
+                                  placeholder="例: paragraph1, paragraph2"
+                                />
+                              </label>
+                              <label>
+                                <span>参照先（解説用）refs_explain (カンマ区切り)</span>
+                                <input
+                                  type="text"
+                                  value={(region.refs_explain || []).join(", ")}
+                                  onChange={(e) =>
+                                    updateRegion(idx, {
+                                      refs_explain: e.target.value
+                                        .split(",")
+                                        .map((s) => s.trim())
+                                        .filter((s) => s),
+                                    })
+                                  }
+                                  placeholder="例: paragraph1, paragraph3"
                                 />
                               </label>
                             </div>
