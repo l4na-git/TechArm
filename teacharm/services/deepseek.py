@@ -115,13 +115,22 @@ class DeepSeekService:
                 rejected=False,
             )
         except Exception as e:
-            logger.error("DeepSeek generation failed: %s", e)
+            logger.error("DeepSeek generation failed: %s", e, exc_info=True)
             elapsed_ms = int((time.time() - start_time) * 1000)
+            error_msg = str(e)
+            # Return more informative error for debugging
+            if "Connection refused" in error_msg or "cannot connect" in error_msg.lower():
+                debug_text = f"[DeepSeek接続エラー: {self._base_url}に接続できません]"
+            elif "timeout" in error_msg.lower():
+                debug_text = f"[DeepSeek タイムアウト: {self._base_url}からの応答がありません]"
+            else:
+                debug_text = f"[DeepSeekエラー: {error_msg[:50]}...]"
+            
             return GenerationResponse(
-                text="うまく説明できなかったから、別の聞き方で教えてね。",
+                text=debug_text,
                 request_time_ms=elapsed_ms,
                 rejected=True,
-                rejection_reason=str(e),
+                rejection_reason=error_msg,
             )
 
     async def _call_deepseek(self, request: GenerationRequest) -> str:
@@ -138,6 +147,17 @@ class DeepSeekService:
             "temperature": 0.7,
             "max_tokens": 150,
         }
+
+        logger.debug("Calling DeepSeek at %s with model %s", self._base_url, self._model)
+        logger.debug("System prompt length: %d chars", len(system_prompt))
+        logger.debug("User message length: %d chars", len(user_message))
+
+        import os
+        # Development mode: if TEACHARM_DEV_MODE is set, return mock response
+        if os.getenv("TEACHARM_DEV_MODE"):
+            logger.info("Using mock DeepSeek response (DEV_MODE)")
+            label = request.region_label or request.region_id
+            return f"{label}を見てみよう。ここをよく読んで、大事な言葉を探してみてください。"
 
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(
@@ -158,10 +178,9 @@ class DeepSeekService:
 - 教材内容について、相手にわかりやすく説明する
 - 1〜2文で簡潔に答える
 - 次に何を見ればいいか、具体的なヒントを含める
-- 【重要】参照領域がある場合でも、見つからない場合でも、必ず何か答える
 
 制約:
-- 教材の範囲内のみ回答する。わからなくても、何か答える。「説明できない」は禁止
+- 教材の範囲内のみ回答する
 - 教材外の質問は丁寧に断り、学習に戻す
 - 個人情報は聞かない、答えない
 - 答えを直接言わず、考え方や手がかりを示す
@@ -170,6 +189,7 @@ class DeepSeekService:
 - 相手の年齢や属性を決めつける呼びかけは禁止
 - 呼びかけは中立にする（例: 「いっしょに見てみよう」「ここを確認しよう」「順番に見ていこう」）
 - 口調はやさしく
+- 教材内の根拠が乏しい場合は、確認の質問を1つだけ返してよい
 
 スタイル: {request.style}
 - hint: ヒントや手がかりを示す（答えは言わない）
