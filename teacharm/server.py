@@ -61,6 +61,8 @@ class PointerEvent(BaseModel):
 
 class DialoguePayload(BaseModel):
     text: str
+    current_region_id: Optional[str] = None
+    material_id: Optional[str] = None
 
 
 class MaterialSelectionPayload(BaseModel):
@@ -556,14 +558,22 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 status_code=400, detail="No material selected"
             )
         current_region = None
-        if ctx.state.last_region:
+        
+        # ペイロードで current_region_id が指定されていればそれを使う
+        if payload.current_region_id:
+            material_id = payload.material_id or ctx.state.active_material
+            mat = ctx.repository.list_materials().get(material_id)
+            if mat:
+                current_region = mat.get_region(payload.current_region_id)
+        # なければ state の last_region を使う
+        elif ctx.state.last_region:
             current_region = current_material.get_region(
                 ctx.state.last_region
             )
         
         dialogue_resp = await ctx.dialogue.on_text(
             user_text=payload.text,
-            material_id=ctx.state.active_material,
+            material_id=payload.material_id or ctx.state.active_material,
             current_region=current_region,
             state="IDLE" if not current_region else "TARGET_SELECTED",
         )
