@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import inspect
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 import math
 
@@ -32,6 +33,7 @@ try:
         FeetechMotor = None
     Motor = None
     MotorNormMode = None
+    MotorCalibration = None
 except ImportError:
     try:
         from lerobot.motors.feetech import FeetechMotorsBus
@@ -39,10 +41,16 @@ except ImportError:
         FeetechMotorsBus = None
     FeetechMotor = None
     try:
-        from lerobot.motors.motors_bus import Motor, MotorNormMode
+        from lerobot.motors.motors_bus import Motor, MotorNormMode, MotorCalibration
     except ImportError:
         Motor = None
         MotorNormMode = None
+        MotorCalibration = None
+
+try:
+    import draccus
+except ImportError:
+    draccus = None
 
 
 @dataclass
@@ -90,6 +98,7 @@ class ArmService:
         config: Dict,
         port: Optional[str] = None,
         baudrate: Optional[int] = None,
+        calibration_path: Optional[Path | str] = None,
     ):
         self._config = config
         self._connected = False
@@ -104,6 +113,18 @@ class ArmService:
         self._max_speed = config.get("motion", {}).get("max_speed", 0.3)
         self._motor_bus = None
         self._last_joint_angles = [0.0] * len(self._joints)
+        self._lock_wrist_roll = config.get("lock_wrist_roll", True)
+        self._calibration_path = (
+            Path(calibration_path).expanduser()
+            if calibration_path
+            else None
+        )
+        self._motor_calibration = (
+            self._load_motor_calibration(self._calibration_path)
+            if self._calibration_path
+            else None
+        )
+        self._apply_calibration_limits()
 
     def _load_joint_configs(self, config: Dict) -> List[JointConfig]:
         joints = config.get("motor_config", {}).get("joints")
@@ -160,9 +181,62 @@ class ArmService:
             signature = inspect.signature(FeetechMotorsBus)
             if "baudrate" in signature.parameters:
                 kwargs["baudrate"] = self._baudrate
+            if "calibration" in signature.parameters and self._motor_calibration:
+                kwargs["calibration"] = self._motor_calibration
         except (TypeError, ValueError):
             kwargs["baudrate"] = self._baudrate
         return FeetechMotorsBus(**kwargs)
+
+    def _apply_calibration_limits(self) -> None:
+        if not self._motor_calibration:
+            return
+        max_res = None
+        if FeetechMotorsBus is not None:
+            max_res = FeetechMotorsBus.model_resolution_table.get("sts3215")
+        if max_res is None:
+            max_res = 4095
+        for joint in self._joints:
+            if joint.name == "gripper":
+                joint.min_angle = 0.0
+                joint.max_angle = 100.0
+                continue
+            calib = self._motor_calibration.get(joint.name)
+            if not calib:
+                continue
+            range_min = getattr(calib, "range_min", None)
+            range_max = getattr(calib, "range_max", None)
+            if range_min is None or range_max is None:
+                continue
+            mid = (range_min + range_max) / 2
+            joint.min_angle = (range_min - mid) * 360 / max_res
+            joint.max_angle = (range_max - mid) * 360 / max_res
+            logger.info(
+                "Calibration-derived limits for %s: [%.2f, %.2f] deg",
+                joint.name,
+                joint.min_angle,
+                joint.max_angle,
+            )
+
+    def _load_motor_calibration(self, path: Path) -> Optional[Dict[str, Any]]:
+        if not path.exists():
+            logger.warning("Motor calibration file not found: %s", path)
+            return None
+        if draccus is None or MotorCalibration is None:
+            logger.warning(
+                "Motor calibration load skipped (missing draccus or MotorCalibration)"
+            )
+            return None
+        try:
+            with path.open("r", encoding="utf-8") as handle, draccus.config_type("json"):
+                calibration = draccus.load(dict[str, MotorCalibration], handle)
+            if not calibration:
+                logger.warning("Motor calibration file is empty: %s", path)
+            else:
+                logger.info("Loaded motor calibration: %s", path)
+            return calibration
+        except Exception as exc:
+            logger.warning("Failed to load motor calibration %s: %s", path, exc)
+            return None
 
     async def _maybe_await(self, result: Any) -> Any:
         if inspect.isawaitable(result):
@@ -236,21 +310,31 @@ class ArmService:
         Note: This method does NOT establish a connection. Connection is
         established on-demand in move_joints() or move_to().
         """
-        if self._calibrated:
+        if not self._connected:
             return
-        
-        # If already connected, read calibration from motor bus
-        if self._connected:
-            logger.info("Ensuring SO-101 calibration")
+
+        calibration = getattr(self._motor_bus, "calibration", None)
+        if self._calibrated and calibration:
+            return
+
+        logger.info("Ensuring SO-101 calibration")
+        if (not calibration) and self._motor_calibration:
+            self._motor_bus.calibration = self._motor_calibration
             calibration = getattr(self._motor_bus, "calibration", None)
-            read_calibration = getattr(self._motor_bus, "read_calibration", None)
-            if calibration == {} and callable(read_calibration):
-                try:
-                    self._motor_bus.calibration = read_calibration()
-                except Exception as exc:  # best-effort, fallback to raw reads
-                    logger.warning("Failed to read motor calibration: %s", exc)
-        
-        # Mark as calibrated (even if not connected, will retry on motion)
+
+        read_calibration = getattr(self._motor_bus, "read_calibration", None)
+        if (not calibration) and callable(read_calibration):
+            try:
+                self._motor_bus.calibration = read_calibration()
+            except Exception as exc:  # best-effort, fallback to raw reads
+                logger.warning("Failed to read motor calibration: %s", exc)
+            calibration = getattr(self._motor_bus, "calibration", None)
+
+        if not calibration:
+            logger.warning("Motor bus calibration missing; movement may fail")
+            self._calibrated = False
+            return
+
         self._calibrated = True
 
     async def move_to(self, command: ArmCommand) -> None:
@@ -307,9 +391,18 @@ class ArmService:
         
         if len(command.angles) != 6:
             raise ValueError(f"SO-101 requires 6 joint angles, got {len(command.angles)}")
-        
+
+        angles = list(command.angles)
+        if self._lock_wrist_roll and len(angles) >= 5:
+            try:
+                current_angles = await self.get_joint_positions()
+                angles[4] = current_angles[4]
+                logger.info("Locking wrist_roll to current angle for move_joints")
+            except Exception as exc:
+                logger.warning("Failed to read current joints for wrist_roll lock: %s", exc)
+
         # Validate joint limits if configured
-        for i, (joint, angle) in enumerate(zip(self._joints, command.angles)):
+        for i, (joint, angle) in enumerate(zip(self._joints, angles)):
             if joint.min_angle is not None and angle < joint.min_angle:
                 logger.warning(f"Joint {i+1} ({joint.name}): {angle}° below min {joint.min_angle}°")
             if joint.max_angle is not None and angle > joint.max_angle:
@@ -326,12 +419,12 @@ class ArmService:
 
         logger.info(
             "Moving SO-101 joints: [%.1f, %.1f, %.1f, %.1f, %.1f, %.1f] deg @ speed=%.2f",
-            *command.angles,
+            *angles,
             speed,
         )
         await self._bus_write("Torque_Enable", [1] * len(self._joints))
-        await self._bus_write("Goal_Position", command.angles)
-        self._last_joint_angles = list(command.angles)
+        await self._bus_write("Goal_Position", angles)
+        self._last_joint_angles = list(angles)
 
     async def go_safe_pose(self, speed: float = 0.2) -> None:
         """Move arm to configured safe pose.

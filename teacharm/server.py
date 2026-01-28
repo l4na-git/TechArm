@@ -124,6 +124,7 @@ class TeachArmContext:
             arm_limits,
             port=settings.so101_port,
             baudrate=settings.so101_baudrate,
+            calibration_path=settings.so101_calibration_path,
         )
         self.vision = VisionService(settings)
         

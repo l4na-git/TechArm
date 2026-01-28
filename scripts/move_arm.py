@@ -61,6 +61,33 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Move to configured safe pose",
     )
     parser.add_argument(
+        "--safe-init-safe",
+        action="store_true",
+        help="Move safe pose -> init pose -> safe pose in one run",
+    )
+    parser.add_argument(
+        "--safe-init-forward-init-safe",
+        action="store_true",
+        help="Move safe -> init -> forward (robot +X) -> init -> safe",
+    )
+    parser.add_argument(
+        "--forward-distance",
+        type=float,
+        default=0.05,
+        help="Forward distance in meters for forward sequence (default: 0.05)",
+    )
+    parser.add_argument(
+        "--forward-up",
+        type=float,
+        default=0.01,
+        help="Upward distance in meters for forward sequence (default: 0.01)",
+    )
+    parser.add_argument(
+        "--init-pose",
+        action="store_true",
+        help="Move to configured init pose",
+    )
+    parser.add_argument(
         "--wait",
         type=float,
         default=1.5,
@@ -70,6 +97,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--hold",
         action="store_true",
         help="Keep torque enabled after exit (skip torque-off on disconnect)",
+    )
+    parser.add_argument(
+        "--hold-forever",
+        action="store_true",
+        help="Keep torque enabled and keep process running until interrupted",
     )
     parser.add_argument(
         "--nudge-safe",
@@ -120,6 +152,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 async def _run(args: argparse.Namespace) -> int:
+    if args.hold_forever:
+        args.hold = True
     settings = load_settings()
     arm_limits_path = settings.config_dir / "arm_limits.json"
     if not arm_limits_path.exists():
@@ -129,6 +163,7 @@ async def _run(args: argparse.Namespace) -> int:
         arm_limits,
         port=args.port or settings.so101_port,
         baudrate=args.baudrate or settings.so101_baudrate,
+        calibration_path=settings.so101_calibration_path,
     )
 
     try:
@@ -144,11 +179,91 @@ async def _run(args: argparse.Namespace) -> int:
             await service.go_safe_pose()
             if args.wait > 0:
                 await asyncio.sleep(args.wait)
+            if args.hold_forever:
+                while True:
+                    await asyncio.sleep(3600)
             return 0
         if args.safe_pose:
             await service.go_safe_pose(speed=args.speed)
             if args.wait > 0:
                 await asyncio.sleep(args.wait)
+            if args.hold_forever:
+                while True:
+                    await asyncio.sleep(3600)
+            return 0
+        if args.safe_init_safe:
+            await service.go_safe_pose(speed=args.speed)
+            if args.wait > 0:
+                await asyncio.sleep(args.wait)
+            await service.go_init_pose(speed=args.speed)
+            if args.wait > 0:
+                await asyncio.sleep(args.wait)
+            await service.go_safe_pose(speed=args.speed)
+            if args.wait > 0:
+                await asyncio.sleep(args.wait)
+            if args.hold_forever:
+                while True:
+                    await asyncio.sleep(3600)
+            return 0
+        if args.safe_init_forward_init_safe:
+            await service.go_safe_pose(speed=args.speed)
+            if args.wait > 0:
+                await asyncio.sleep(args.wait)
+            positions = await service.get_joint_positions()
+            transform, _, _ = forward_kinematics(
+                np.deg2rad(np.array(positions[:5], dtype=float)).tolist(),
+                return_chain=False,
+            )
+            current_xyz = transform[:3, 3]
+            target = current_xyz + np.array(
+                [args.forward_distance, 0.0, args.forward_up], dtype=float
+            )
+            await service.go_init_pose(speed=args.speed)
+            if args.wait > 0:
+                await asyncio.sleep(args.wait)
+
+            if args.lock_wrist_roll:
+                ik_angles, _, _ = solve_ik(
+                    (float(target[0]), float(target[1]), float(target[2])),
+                    initial_angles_deg=positions[:5],
+                )
+                locked_angles = list(ik_angles)
+                locked_angles[4] = positions[4]
+                await service.move_joints(
+                    JointCommand(
+                        angles=locked_angles + [positions[5]],
+                        speed=args.speed,
+                    )
+                )
+            else:
+                await service.move_to(
+                    ArmCommand(
+                        x=float(target[0]),
+                        y=float(target[1]),
+                        z=float(target[2]),
+                        speed=args.speed,
+                    )
+                )
+
+            if args.wait > 0:
+                await asyncio.sleep(args.wait)
+            await service.go_init_pose(speed=args.speed)
+            if args.wait > 0:
+                await asyncio.sleep(args.wait)
+            await service.go_safe_pose(speed=args.speed)
+            if args.wait > 0:
+                await asyncio.sleep(args.wait)
+            if args.hold_forever:
+                while True:
+                    await asyncio.sleep(3600)
+            return 0
+        if args.init_pose:
+            await service.go_init_pose(speed=args.speed)
+            if args.wait > 0:
+                await asyncio.sleep(args.wait)
+            if args.hold_forever:
+                while True:
+                    await asyncio.sleep(3600)
             return 0
         if args.status:
             positions = await service.get_joint_positions()
@@ -213,6 +328,9 @@ async def _run(args: argparse.Namespace) -> int:
                 )
             if args.wait > 0:
                 await asyncio.sleep(args.wait)
+            if args.hold_forever:
+                while True:
+                    await asyncio.sleep(3600)
             return 0
         if args.joints:
             await service.move_joints(
@@ -220,6 +338,9 @@ async def _run(args: argparse.Namespace) -> int:
             )
             if args.wait > 0:
                 await asyncio.sleep(args.wait)
+            if args.hold_forever:
+                while True:
+                    await asyncio.sleep(3600)
             return 0
     finally:
         await service.disconnect(stop=not args.hold)
@@ -234,12 +355,16 @@ def main() -> None:
         or args.xyz_relative
         or args.joints
         or args.safe_pose
+        or args.safe_init_safe
+        or args.safe_init_forward_init_safe
+        or args.init_pose
         or args.status
         or args.current_xyz
         or args.nudge_safe
     ):
         parser.error(
-            "Specify --xyz, --xyz-relative, --joints, --safe-pose, --status, --current-xyz, or --nudge-safe"
+            "Specify --xyz, --xyz-relative, --joints, --safe-pose, --safe-init-safe, "
+            "--safe-init-forward-init-safe, --init-pose, --status, --current-xyz, or --nudge-safe"
         )
     if args.xyz and args.xyz_relative:
         parser.error("Specify only one of --xyz or --xyz-relative")
