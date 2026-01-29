@@ -13,3 +13,4 @@ logs/
 *.log
 .mypy_cache/
 cache/
+materials/
