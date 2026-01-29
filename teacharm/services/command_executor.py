@@ -79,6 +79,7 @@ class CommandExecutor:
         arm_service: Any,
         calibration: Any = None,
         materials: Any = None,
+        marker_mapping: Any = None,
     ):
         """Initialize command executor.
         
@@ -89,6 +90,11 @@ class CommandExecutor:
         self.arm = arm_service
         self.calibration = calibration  # Optional, for coordinate transforms
         self.materials = materials
+        self.marker_mapping = marker_mapping
+        # Forward offset for pointing (robot +X). 5cm default.
+        self.point_forward_offset_m = 0.05
+        # Fixed pointing height (robot Z). 1cm default.
+        self.point_height_m = 0.01
         self._state = CommandExecutorState()
         self._lock = asyncio.Lock()
 
@@ -256,14 +262,15 @@ class CommandExecutor:
         Raises:
             ValueError: If calibration incomplete or coordinate out of bounds
         """
-        if not self.calibration:
-            raise ValueError("ARM_POINT_CENTER: Calibration service not available")
-        
-        # Convert center coordinates (u=0.5, v=0.5) to arm coordinates
         try:
-            x, y, z = self.calibration.uv_to_xyz(0.5, 0.5)
-            logger.info("ARM_POINT_CENTER: Converted (0.5, 0.5) -> (%.1f, %.1f, %.1f) mm",
-                       x, y, z)
+            x, y, z = self._map_uv_to_xyz(0.5, 0.5)
+            x, y, z = self._apply_forward_offset(x, y, z)
+            logger.info(
+                "ARM_POINT_CENTER: Converted (0.5, 0.5) -> (%.1f, %.1f, %.1f)",
+                x,
+                y,
+                z,
+            )
         except ValueError as exc:
             raise ValueError(f"ARM_POINT_CENTER: Calibration transform failed - {exc}")
         
@@ -287,9 +294,6 @@ class CommandExecutor:
         if not cmd.region_id:
             raise ValueError("ARM_POINT_REGION: region_id required")
         
-        if not self.calibration:
-            raise ValueError("ARM_POINT_REGION: Calibration service not available")
-        
         if not self.materials:
             raise ValueError("ARM_POINT_REGION: Materials repository not available")
 
@@ -303,12 +307,17 @@ class CommandExecutor:
         if not region:
             raise ValueError(f"ARM_POINT_REGION: region not found ({cmd.region_id})")
 
-        u = region.bbox.x + (region.bbox.w / 2)
-        v = region.bbox.y + (region.bbox.h / 2)
+        if getattr(region, "center", None):
+            u = region.center.u
+            v = region.center.v
+        else:
+            u = region.bbox.x + (region.bbox.w / 2)
+            v = region.bbox.y + (region.bbox.h / 2)
         try:
-            x, y, z = self.calibration.uv_to_xyz(u, v)
+            x, y, z = self._map_uv_to_xyz(u, v)
+            x, y, z = self._apply_forward_offset(x, y, z)
             logger.info(
-                "ARM_POINT_REGION: %s center (%.3f, %.3f) -> (%.1f, %.1f, %.1f) mm",
+                "ARM_POINT_REGION: %s center (%.3f, %.3f) -> (%.1f, %.1f, %.1f)",
                 cmd.region_id,
                 u,
                 v,
@@ -324,6 +333,27 @@ class CommandExecutor:
         from .arm import ArmCommand
         cmd_arm = ArmCommand(x=x, y=y, z=z, speed=0.2)
         await self.arm.move_to(cmd_arm)
+
+    def _apply_forward_offset(
+        self, x: float, y: float, z: float
+    ) -> tuple[float, float, float]:
+        """Apply forward offset and fixed height for pointing.
+
+        Uses a unit heuristic: values > 10 are treated as millimeters.
+        """
+        scale = 1.0
+        if max(abs(x), abs(y), abs(z)) > 10.0:
+            scale = 1000.0  # treat as mm
+        offset = self.point_forward_offset_m * scale
+        height = self.point_height_m * scale
+        return x + offset, y, height
+
+    def _map_uv_to_xyz(self, u: float, v: float) -> tuple[float, float, float]:
+        if self.marker_mapping and getattr(self.marker_mapping, "is_complete", lambda: False)():
+            return self.marker_mapping.uv_to_xyz(u, v)
+        if not self.calibration:
+            raise ValueError("ARM_POINT_*: Calibration service not available")
+        return self.calibration.uv_to_xyz(u, v)
 
     def reset(self) -> None:
         """Reset executor state (for testing/debugging)."""
