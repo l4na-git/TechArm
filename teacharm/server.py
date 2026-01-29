@@ -30,6 +30,7 @@ from .mapping import MaterialRepository
 from .materials import Material, Region, load_materials
 from .scripts import load_scripts
 from .services.arm import ArmCommand, ArmService
+from .kinematics import forward_kinematics, solve_ik
 from .services.deepseek import DeepSeekService
 from .services.dialogue import DialogueService
 from .services.router import RouterService
@@ -37,6 +38,7 @@ from .services.tts import VoiceVoxService
 from .services.vision import VisionService, VisionFrame
 from .services.asr import ASRService
 from .services.command_executor import CommandExecutor
+from .services.marker_mapping import MarkerMapping
 from .services.calibration import ArmCalibration
 from .state import AppState
 
@@ -74,6 +76,18 @@ class ArmMovePayload(BaseModel):
     y: float
     z: float
     speed: float = 0.2
+
+
+class ArmPointRegionPayload(BaseModel):
+    region_id: str
+    material_id: Optional[str] = None
+
+
+class ArmSafeInitForwardPayload(BaseModel):
+    wait: float = 1.0
+    speed: float = 0.2
+    forward_distance: float = 0.05
+    forward_up: float = 0.01
 
 
 class ScriptUpdatePayload(BaseModel):
@@ -130,20 +144,28 @@ class TeachArmContext:
         
         # Determine calibration path: LeRobot official first, then fallback
         self.calibration_path = settings.config_dir / "arm_calibration.json"
-        if settings.so101_calibration_path:
-            calib_path = Path(settings.so101_calibration_path)
+        if settings.arm_calibration_path:
+            calib_path = Path(settings.arm_calibration_path)
             if calib_path.is_file():
                 self.calibration_path = calib_path
-                logger.info(f"Using LeRobot calibration: {self.calibration_path}")
+                logger.info(f"Using arm calibration: {self.calibration_path}")
             else:
-                logger.warning(f"LeRobot calibration not found or not a file: {settings.so101_calibration_path}, using default: {self.calibration_path}")
-        
+                logger.warning(
+                    "Arm calibration not found or not a file: %s, using default: %s",
+                    settings.arm_calibration_path,
+                    self.calibration_path,
+                )
         self.calibration_data = self._load_json(self.calibration_path)
         
         # Initialize command executor with calibration support
         self.calibration = ArmCalibration.from_file(self.calibration_path)
+        self.marker_mapping = (
+            MarkerMapping.from_file(settings.arm_marker_mapping_path)
+            if settings.arm_marker_mapping_path
+            else None
+        )
         self.command_executor = CommandExecutor(
-            self.arm, self.calibration, self.repository
+            self.arm, self.calibration, self.repository, self.marker_mapping
         )
         
         self.offload_calibration_requested = False
@@ -769,6 +791,88 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return {"status": "error", "code": "E_ARM", "detail": str(exc)}
         except Exception as exc:
             logger.error("ARM init_pose unexpected error: %s", exc)
+            return {"status": "error", "code": "E_ARM", "detail": str(exc)}
+
+    @app.post("/api/arm/point_region")
+    async def arm_point_region(payload: ArmPointRegionPayload) -> dict:
+        if payload.material_id:
+            try:
+                material = ctx.repository.select(payload.material_id)
+                ctx.state.active_material = material.material_id
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        executed_commands, command_errors = await ctx.command_executor.execute_commands(
+            {"ARM_POINT_REGION": payload.region_id}
+        )
+
+        return {
+            "status": "ok" if not command_errors else "error",
+            "executed_commands": [
+                {"type": cmd.type.value, "region_id": cmd.region_id}
+                for cmd in executed_commands
+            ],
+            "command_errors": [
+                {
+                    "command": {
+                        "type": err.command.type.value,
+                        "region_id": err.command.region_id,
+                    },
+                    "code": err.code.value,
+                    "detail": err.detail,
+                }
+                for err in command_errors
+            ],
+        }
+
+    @app.post("/api/arm/safe_init_forward_init_safe")
+    async def arm_safe_init_forward_init_safe(
+        payload: ArmSafeInitForwardPayload,
+    ) -> dict:
+        try:
+            await ctx.arm.go_safe_pose(speed=payload.speed)
+            if payload.wait > 0:
+                await asyncio.sleep(payload.wait)
+
+            positions = await ctx.arm.get_joint_positions()
+            transform, _, _ = forward_kinematics(
+                np.deg2rad(np.array(positions[:5], dtype=float)).tolist(),
+                return_chain=False,
+            )
+            current_xyz = transform[:3, 3]
+            target = current_xyz + np.array(
+                [payload.forward_distance, 0.0, payload.forward_up],
+                dtype=float,
+            )
+
+            await ctx.arm.go_init_pose(speed=payload.speed)
+            if payload.wait > 0:
+                await asyncio.sleep(payload.wait)
+
+            await ctx.arm.move_to(
+                ArmCommand(
+                    x=float(target[0]),
+                    y=float(target[1]),
+                    z=float(target[2]),
+                    speed=payload.speed,
+                )
+            )
+
+            if payload.wait > 0:
+                await asyncio.sleep(payload.wait)
+            await ctx.arm.go_init_pose(speed=payload.speed)
+            if payload.wait > 0:
+                await asyncio.sleep(payload.wait)
+            await ctx.arm.go_safe_pose(speed=payload.speed)
+            if payload.wait > 0:
+                await asyncio.sleep(payload.wait)
+
+            return {"status": "ok"}
+        except RuntimeError as exc:
+            logger.warning("ARM safe_init_forward error: %s", exc)
+            return {"status": "error", "code": "E_ARM", "detail": str(exc)}
+        except Exception as exc:
+            logger.error("ARM safe_init_forward unexpected error: %s", exc)
             return {"status": "error", "code": "E_ARM", "detail": str(exc)}
 
     @app.get("/api/state")
