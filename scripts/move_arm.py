@@ -13,11 +13,17 @@ import numpy as np
 try:
     from teacharm.config import load_settings
     from teacharm.kinematics import forward_kinematics, solve_ik
+    from teacharm.materials import load_materials
+    from teacharm.services.calibration import ArmCalibration
+    from teacharm.services.marker_mapping import MarkerMapping
     from teacharm.services.arm import ArmService, ArmCommand, JointCommand
 except ImportError:  # fallback when executed as a script
     sys.path.append(str(Path(__file__).resolve().parent.parent))
     from teacharm.config import load_settings
     from teacharm.kinematics import forward_kinematics, solve_ik
+    from teacharm.materials import load_materials
+    from teacharm.services.calibration import ArmCalibration
+    from teacharm.services.marker_mapping import MarkerMapping
     from teacharm.services.arm import ArmService, ArmCommand, JointCommand
 
 
@@ -137,6 +143,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Read current joint angles and print end-effector position (meters)",
     )
     parser.add_argument(
+        "--point-paragraph",
+        type=str,
+        default=None,
+        help="Point to a paragraph center: format MATERIAL_ID:NUM (e.g., A:1)",
+    )
+    parser.add_argument(
         "--port",
         type=str,
         default=None,
@@ -167,6 +179,62 @@ async def _run(args: argparse.Namespace) -> int:
     )
 
     try:
+        if args.point_paragraph:
+            try:
+                material_id, paragraph_num = args.point_paragraph.split(":")
+            except ValueError:
+                raise ValueError("--point-paragraph must be MATERIAL_ID:NUM (e.g., A:1)")
+            material_id = material_id.strip().upper()
+            paragraph_num = paragraph_num.strip()
+            region_id = f"paragraph{paragraph_num}"
+
+            materials = load_materials(settings.materials_dir)
+            material = materials.get(material_id)
+            if not material:
+                raise ValueError(f"Unknown material id: {material_id}")
+            region = material.get_region(region_id)
+            if not region:
+                raise ValueError(f"Unknown region id: {region_id}")
+
+            center = getattr(region, "center", None)
+            if center:
+                u, v = center.u, center.v
+            else:
+                u = region.bbox.x + (region.bbox.w / 2)
+                v = region.bbox.y + (region.bbox.h / 2)
+
+            marker_mapping = None
+            marker_mapping_path = settings.arm_marker_mapping_path
+            if marker_mapping_path is None:
+                candidate = settings.config_dir / "arm_marker_mapping.json"
+                if candidate.exists():
+                    marker_mapping_path = candidate
+            if marker_mapping_path:
+                marker_mapping = MarkerMapping.from_file(marker_mapping_path)
+
+            if marker_mapping and marker_mapping.is_complete():
+                x, y, z = marker_mapping.uv_to_xyz(u, v)
+            else:
+                calibration_path = (
+                    settings.arm_calibration_path
+                    or settings.config_dir / "arm_calibration.json"
+                )
+                calibration = ArmCalibration.from_file(calibration_path)
+                x, y, z = calibration.uv_to_xyz(u, v)
+
+            scale = 1.0
+            if max(abs(x), abs(y), abs(z)) > 10.0:
+                scale = 1000.0  # treat as mm
+            x = x + (0.05 * scale)
+            z = 0.01 * scale
+
+            await service.move_to(ArmCommand(x=float(x), y=float(y), z=float(z), speed=args.speed))
+            if args.wait > 0:
+                await asyncio.sleep(args.wait)
+            if args.hold_forever:
+                while True:
+                    await asyncio.sleep(3600)
+            return 0
         if args.nudge_safe:
             positions = await service.get_joint_positions()
             target = list(positions)
@@ -360,11 +428,13 @@ def main() -> None:
         or args.init_pose
         or args.status
         or args.current_xyz
+        or args.point_paragraph
         or args.nudge_safe
     ):
         parser.error(
             "Specify --xyz, --xyz-relative, --joints, --safe-pose, --safe-init-safe, "
-            "--safe-init-forward-init-safe, --init-pose, --status, --current-xyz, or --nudge-safe"
+            "--safe-init-forward-init-safe, --init-pose, --status, --current-xyz, "
+            "--point-paragraph, or --nudge-safe"
         )
     if args.xyz and args.xyz_relative:
         parser.error("Specify only one of --xyz or --xyz-relative")
