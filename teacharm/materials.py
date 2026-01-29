@@ -31,6 +31,19 @@ class BoundingBox(BaseModel):
         return in_x and in_y
 
 
+class NormalizedPoint(BaseModel):
+    """Normalized point in UV coordinates."""
+
+    u: float
+    v: float
+
+    @validator("*")
+    def _ensure_range(cls, value: float) -> float:
+        if not 0 <= value <= 1:
+            raise ValueError("Point coordinates must be normalized (0-1)")
+        return value
+
+
 class Region(BaseModel):
     """A region mapped on a material."""
 
@@ -38,6 +51,7 @@ class Region(BaseModel):
     type: str
     label: Optional[str] = None
     bbox: BoundingBox
+    center: Optional[NormalizedPoint] = None
     on_point: List[str] = []
     on_help: List[str] = []
     extracted_text: Optional[str] = None  # PDF抽出テキスト
@@ -119,6 +133,14 @@ def load_materials(material_dir: Path) -> Dict[str, Material]:
                     region_obj = material.get_region(region_id)
                     if region_obj:
                         region_obj.extracted_text = extracted
+
+        # Ensure region centers are populated from bbox when missing
+        for region in material.regions:
+            if region.center is None and region.bbox:
+                region.center = NormalizedPoint(
+                    u=region.bbox.x + (region.bbox.w / 2),
+                    v=region.bbox.y + (region.bbox.h / 2),
+                )
         
         materials[material.material_id] = material
     return materials
