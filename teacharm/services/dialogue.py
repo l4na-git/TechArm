@@ -122,6 +122,30 @@ class DialogueService:
         """Handle user text input through Router."""
         text = user_text.strip()
 
+        explicit_region = self._parse_explicit_paragraph_reference(text)
+        if explicit_region:
+            material_id, region = explicit_region
+            if material_id:
+                try:
+                    self._materials.select(material_id)
+                except KeyError:
+                    logger.warning("Unknown material id: %s", material_id)
+            label = region.label or region.id
+            msg = f"{label}の中央を指すね。"
+            response = DialogueResponse(
+                text=msg,
+                commands=[
+                    {"SAY": msg},
+                    {"POINT": {"region_id": region.id, "anchor": "center"}},
+                    {"ARM_POINT_REGION": region.id},
+                ],
+                source="router",
+                router_action="explicit_paragraph",
+            )
+            self._last_response = response
+            self._last_region_id = region.id
+            return response
+
         # Quick greeting check
         if self._is_greeting_only(text):
             msg = self._scripts.intent.greeting_reply
@@ -401,6 +425,39 @@ class DialogueService:
             "POINT command: region_id=%s anchor=center",
             target_region.id,
         )
+
+    def _parse_explicit_paragraph_reference(
+        self, user_text: str
+    ) -> Optional[tuple[str, Region]]:
+        """Parse explicit references like '教材Aの段落1'."""
+        normalized = user_text.replace("教材", "教材")
+        material_match = re.search(r"教材\s*([A-Za-z0-9])", normalized)
+        paragraph_match = re.search(r"段落\s*([0-9]+)", normalized)
+        if not paragraph_match:
+            return None
+        paragraph_num = paragraph_match.group(1)
+        region_id = f"paragraph{paragraph_num}"
+
+        material_id = None
+        if material_match:
+            material_id = material_match.group(1).upper()
+
+        if material_id:
+            material = self._materials.list_materials().get(material_id)
+            if not material:
+                return None
+            region = material.get_region(region_id)
+            if not region:
+                return None
+            return material_id, region
+
+        material = self._materials.current
+        if not material:
+            return None
+        region = material.get_region(region_id)
+        if not region:
+            return None
+        return material.material_id, region
 
     def _repeat_last(self, router_output: Any) -> DialogueResponse:
         """Repeat the last response."""
