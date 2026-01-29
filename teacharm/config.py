@@ -86,6 +86,18 @@ class Settings(BaseSettings):
         description="Path to LeRobot official calibration JSON (e.g., ~/.cache/huggingface/lerobot/calibration/robots/so101_follower/calibration.json)",
     )
 
+    arm_calibration_path: Optional[Path] = Field(
+        default=None,
+        env="ARM_CALIBRATION_PATH",
+        description="Path to TeachArm UV->XYZ calibration JSON (arm_calibration.json)",
+    )
+
+    arm_marker_mapping_path: Optional[Path] = Field(
+        default=None,
+        env="ARM_MARKER_MAPPING_PATH",
+        description="Path to marker-based UV->XY mapping JSON",
+    )
+
     allowed_origins: List[str] = Field(
         default_factory=lambda: ["*"],
         env="TEACHARM_ALLOWED_ORIGINS",
@@ -120,4 +132,14 @@ def load_settings() -> Settings:
     settings.materials_dir = settings.resolve_path(settings.materials_dir)
     settings.scripts_dir = settings.resolve_path(settings.scripts_dir)
     settings.config_dir = settings.resolve_path(settings.config_dir)
+    if settings.arm_calibration_path:
+        arm_path = Path(settings.arm_calibration_path).expanduser()
+        if not arm_path.is_absolute():
+            arm_path = settings.resolve_path(arm_path)
+        settings.arm_calibration_path = arm_path.resolve()
+    if settings.arm_marker_mapping_path:
+        marker_path = Path(settings.arm_marker_mapping_path).expanduser()
+        if not marker_path.is_absolute():
+            marker_path = settings.resolve_path(marker_path)
+        settings.arm_marker_mapping_path = marker_path.resolve()
     return settings
